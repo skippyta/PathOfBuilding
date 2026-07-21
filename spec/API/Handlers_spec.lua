@@ -102,7 +102,21 @@ describe('Handlers API via stdio', function()
       { action = 'set_level', params = { level = 20 } },
       { action = 'get_build_info' },
       { action = 'get_config' },
-      { action = 'set_config', params = { enemyLevel = 83, bandit = 'None' } },
+      { action = 'set_config', params = {
+        enemyLevel = 83,
+        bandit = 'None',
+        usePowerCharges = true,
+        useFrenzyCharges = false,
+        useEnduranceCharges = true,
+        conditionOnConsecratedGround = true,
+        conditionKilledRecently = false,
+        conditionBeenHitRecently = true,
+        enemyIsBoss = 'Pinnacle',
+        enemyFireResist = 50,
+        enemyColdResist = 51,
+        enemyLightningResist = 52,
+        enemyChaosResist = 30,
+      } },
       { action = 'get_config' },
       { action = 'quit' },
     })
@@ -117,6 +131,41 @@ describe('Handlers API via stdio', function()
     assert.are.equal(20, levels[#levels])
     assert.is_true(#cfgs >= 2)
     assert.are.equal(83, cfgs[#cfgs].enemyLevel)
+    assert.is_true(cfgs[#cfgs].usePowerCharges)
+    assert.is_false(cfgs[#cfgs].useFrenzyCharges)
+    assert.is_true(cfgs[#cfgs].useEnduranceCharges)
+    assert.is_true(cfgs[#cfgs].conditionOnConsecratedGround)
+    assert.is_false(cfgs[#cfgs].conditionKilledRecently)
+    assert.is_true(cfgs[#cfgs].conditionBeenHitRecently)
+    assert.are.equal('Pinnacle', cfgs[#cfgs].enemyIsBoss)
+    assert.are.equal(50, cfgs[#cfgs].enemyFireResist)
+    assert.are.equal(51, cfgs[#cfgs].enemyColdResist)
+    assert.are.equal(52, cfgs[#cfgs].enemyLightningResist)
+    assert.are.equal(30, cfgs[#cfgs].enemyChaosResist)
+  end)
+
+  it('rejects invalid config atomically', function()
+    local xml = read_fixture_xml()
+    local _, objs = run_stdio_session({
+      { action = 'load_build_xml', params = { xml = xml, name = 'Spec Build' } },
+      { action = 'set_config', params = { usePowerCharges = false, enemyIsBoss = 'None' } },
+      { action = 'set_config', params = { usePowerCharges = true, enemyIsBoss = 'Invalid' } },
+      { action = 'get_config' },
+      { action = 'set_config', params = { unsupportedField = true } },
+      { action = 'quit' },
+    })
+    local errors = {}
+    local lastConfig
+    for _, response in ipairs(objs) do
+      if response.ok == false then table.insert(errors, response) end
+      if response.config then lastConfig = response.config end
+    end
+    assert.are.equal(2, #errors)
+    assert.are.equal('enemyIsBoss must be one of None, Boss, Pinnacle, or Uber', errors[1].error)
+    assert.are.equal('unsupported config field: unsupportedField', errors[2].error)
+    assert.is_table(lastConfig)
+    assert.is_false(lastConfig.usePowerCharges)
+    assert.are.equal('None', lastConfig.enemyIsBoss)
   end)
 
   it('computes with tree deltas and toggles flasks', function()

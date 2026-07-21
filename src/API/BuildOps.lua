@@ -375,7 +375,14 @@ function M.set_config(params)
   if params.bandit ~= nil then input.bandit = tostring(params.bandit); changed = true end
   if params.pantheonMajorGod ~= nil then input.pantheonMajorGod = tostring(params.pantheonMajorGod); changed = true end
   if params.pantheonMinorGod ~= nil then input.pantheonMinorGod = tostring(params.pantheonMinorGod); changed = true end
-  if params.enemyLevel ~= nil then build.configTab.enemyLevel = tonumber(params.enemyLevel) or build.configTab.enemyLevel; changed = true end
+  if params.enemyLevel ~= nil then
+    local enemyLevel = tonumber(params.enemyLevel)
+    if not enemyLevel or enemyLevel < 1 or enemyLevel ~= math.floor(enemyLevel) then
+      return nil, 'enemyLevel must be a positive integer'
+    end
+    input.enemyLevel = enemyLevel
+    changed = true
+  end
   if changed and build.configTab.BuildModList then build.configTab:BuildModList() end
   M.get_main_output()
   return true

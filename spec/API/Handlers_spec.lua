@@ -160,9 +160,9 @@ describe('Handlers API via stdio', function()
     end
     assert.are.equal(2, #errors)
     assert.are.equal('OPERATION_FAILED', errors[1].errorCode)
-    assert.is_truthy(errors[1].error:match('xml is required'))
+    assert.are.equal('missing xml', errors[1].error)
     assert.are.equal('OPERATION_FAILED', errors[2].errorCode)
-    assert.is_truthy(errors[2].error:match('level is required'))
+    assert.are.equal('missing level', errors[2].error)
   end)
 
   it('manages specs and item sets through advertised modern endpoints', function()

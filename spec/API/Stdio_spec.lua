@@ -45,7 +45,7 @@ describe('Stdio API', function()
     for i, o in ipairs(objs) do
       if o.ready then idxReady = idxReady or i end
       if o.pong then idxPing = idxPing or i end
-      if o.version then idxVersion = idxVersion or i end
+      if o.version and not o.ready then idxVersion = idxVersion or i end
       if o.quit then idxQuit = idxQuit or i end
     end
     assert.is_truthy(idxReady, 'missing ready response')

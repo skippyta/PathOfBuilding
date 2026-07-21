@@ -1,4 +1,7 @@
-local utf8 = dofile('src/API/Utf8Fallback.lua')
+local probe = io.open('API/Utf8Fallback.lua', 'r')
+local fallbackPath = probe and 'API/Utf8Fallback.lua' or 'src/API/Utf8Fallback.lua'
+if probe then probe:close() end
+local utf8 = dofile(fallbackPath)
 
 describe('API UTF-8 fallback', function()
   it('preserves complete codepoints while reversing and slicing', function()

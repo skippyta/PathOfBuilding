@@ -9,6 +9,53 @@ local MAX_PLAYER_LEVEL = 100
 local NUM_FLASK_SLOTS = 5
 local MAX_ITEM_TEXT_LENGTH = 10240  -- 10KB
 
+local CONFIG_STRING_FIELDS = {
+  bandit = true,
+  pantheonMajorGod = true,
+  pantheonMinorGod = true,
+}
+local CONFIG_BOOLEAN_FIELDS = {
+  usePowerCharges = true,
+  useFrenzyCharges = true,
+  useEnduranceCharges = true,
+  conditionOnConsecratedGround = true,
+  conditionKilledRecently = true,
+  conditionBeenHitRecently = true,
+}
+local CONFIG_INTEGER_FIELDS = {
+  enemyFireResist = true,
+  enemyColdResist = true,
+  enemyLightningResist = true,
+  enemyChaosResist = true,
+}
+local CONFIG_BOSS_VALUES = {
+  None = true,
+  Boss = true,
+  Pinnacle = true,
+  Uber = true,
+}
+local CONFIG_FIELD_ORDER = {
+  'bandit',
+  'pantheonMajorGod',
+  'pantheonMinorGod',
+  'enemyLevel',
+  'usePowerCharges',
+  'useFrenzyCharges',
+  'useEnduranceCharges',
+  'conditionOnConsecratedGround',
+  'conditionKilledRecently',
+  'conditionBeenHitRecently',
+  'enemyIsBoss',
+  'enemyFireResist',
+  'enemyColdResist',
+  'enemyLightningResist',
+  'enemyChaosResist',
+}
+local CONFIG_FIELDS = {}
+for _, fieldName in ipairs(CONFIG_FIELD_ORDER) do
+  CONFIG_FIELDS[fieldName] = true
+end
+
 local function normalize_node_ids(values, fieldName)
   if values == nil then
     return {}
@@ -356,35 +403,80 @@ end
 -- Get basic config values
 function M.get_config()
   if not build or not build.configTab then return nil, 'build/config not initialized' end
+  local input = build.configTab.input or {}
   local cfg = {
-    bandit = build.configTab.input and build.configTab.input.bandit or build.bandit,
-    pantheonMajorGod = build.configTab.input and build.configTab.input.pantheonMajorGod or build.pantheonMajorGod,
-    pantheonMinorGod = build.configTab.input and build.configTab.input.pantheonMinorGod or build.pantheonMinorGod,
+    bandit = input.bandit or build.bandit,
+    pantheonMajorGod = input.pantheonMajorGod or build.pantheonMajorGod,
+    pantheonMinorGod = input.pantheonMinorGod or build.pantheonMinorGod,
     enemyLevel = build.configTab.enemyLevel,
   }
+  for fieldName in pairs(CONFIG_BOOLEAN_FIELDS) do
+    if input[fieldName] ~= nil then cfg[fieldName] = input[fieldName] end
+  end
+  if input.enemyIsBoss ~= nil then cfg.enemyIsBoss = input.enemyIsBoss end
+  for fieldName in pairs(CONFIG_INTEGER_FIELDS) do
+    if input[fieldName] ~= nil then cfg[fieldName] = input[fieldName] end
+  end
   return cfg
 end
 
--- Set selected config values and rebuild
+-- Validate and atomically set the supported config values, then rebuild once.
 function M.set_config(params)
   if not build or not build.configTab then return nil, 'build/config not initialized' end
   if type(params) ~= 'table' then return nil, 'invalid params' end
+
+  local suppliedFields = {}
+  for fieldName in pairs(params) do
+    if type(fieldName) ~= 'string' or not CONFIG_FIELDS[fieldName] then
+      table.insert(suppliedFields, tostring(fieldName))
+    end
+  end
+  if #suppliedFields > 0 then
+    table.sort(suppliedFields)
+    return nil, 'unsupported config field: ' .. suppliedFields[1]
+  end
+
+  local normalized = {}
+  for _, fieldName in ipairs(CONFIG_FIELD_ORDER) do
+    local value = params[fieldName]
+    if value ~= nil then
+      if CONFIG_STRING_FIELDS[fieldName] then
+        if type(value) ~= 'string' then
+          return nil, fieldName .. ' must be a string'
+        end
+      elseif CONFIG_BOOLEAN_FIELDS[fieldName] then
+        if type(value) ~= 'boolean' then
+          return nil, fieldName .. ' must be a boolean'
+        end
+      elseif CONFIG_INTEGER_FIELDS[fieldName] then
+        if type(value) ~= 'number' or value ~= math.floor(value) then
+          return nil, fieldName .. ' must be an integer'
+        end
+      elseif fieldName == 'enemyLevel' then
+        if type(value) ~= 'number' or value < 1 or value ~= math.floor(value) then
+          return nil, 'enemyLevel must be a positive integer'
+        end
+      elseif fieldName == 'enemyIsBoss' then
+        if type(value) ~= 'string' or not CONFIG_BOSS_VALUES[value] then
+          return nil, 'enemyIsBoss must be one of None, Boss, Pinnacle, or Uber'
+        end
+      end
+      normalized[fieldName] = value
+    end
+  end
+
   local input = build.configTab.input or {}
   build.configTab.input = input
   local changed = false
-  if params.bandit ~= nil then input.bandit = tostring(params.bandit); changed = true end
-  if params.pantheonMajorGod ~= nil then input.pantheonMajorGod = tostring(params.pantheonMajorGod); changed = true end
-  if params.pantheonMinorGod ~= nil then input.pantheonMinorGod = tostring(params.pantheonMinorGod); changed = true end
-  if params.enemyLevel ~= nil then
-    local enemyLevel = tonumber(params.enemyLevel)
-    if not enemyLevel or enemyLevel < 1 or enemyLevel ~= math.floor(enemyLevel) then
-      return nil, 'enemyLevel must be a positive integer'
+  for _, fieldName in ipairs(CONFIG_FIELD_ORDER) do
+    if normalized[fieldName] ~= nil then
+      input[fieldName] = normalized[fieldName]
+      changed = true
     end
-    input.enemyLevel = enemyLevel
-    changed = true
   end
   if changed and build.configTab.BuildModList then build.configTab:BuildModList() end
-  M.get_main_output()
+  local output, err = M.get_main_output()
+  if not output then return nil, err end
   return true
 end
 

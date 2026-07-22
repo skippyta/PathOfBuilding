@@ -29,7 +29,7 @@ diagnostics are written to stderr.
 Upon startup, the server sends a ready message to stdout:
 
 ```json
-{"ok":true,"ready":true,"version":{"number":"2.65.0","protocolVersion":"2.0.0","engineBaseRevision":"78951a2e7d23bc0bb78e4a2ff777b82e1e54dc1f","capabilities":["get_stats","set_tree","..."]}}
+{"ok":true,"ready":true,"version":{"number":"2.65.0","protocolVersion":"2.2.0","engineBaseRevision":"78951a2e7d23bc0bb78e4a2ff777b82e1e54dc1f","capabilities":["get_stats","set_tree","..."]}}
 ```
 
 ### Sending Commands
@@ -81,8 +81,8 @@ Get version information about Path of Building and the API.
     "number":"3.x.x",
     "branch":"dev",
     "platform":"linux",
-    "apiVersion":"2.0.0",
-    "protocolVersion":"2.0.0",
+    "apiVersion":"2.2.0",
+    "protocolVersion":"2.2.0",
     "engineBaseRevision":"78951a2e7d23bc0bb78e4a2ff777b82e1e54dc1f",
     "capabilities":["get_stats","set_tree","..."]
   }
@@ -689,6 +689,18 @@ POB_API_STDIO=1 luajit src/HeadlessWrapper.lua
 ```
 
 ## API Version History
+
+### v2.2.0 (Deterministic headless data loading)
+
+- Added bounded local zlib inflation for tracked Timeless Jewel lookup tables.
+- Added deterministic numeric enumeration for split Glorious Vanity data.
+- Disabled generated Timeless Jewel cache writes in stdio mode so concurrent
+  workers can share one engine checkout safely.
+
+### v2.1.0 (Atomic house configuration)
+
+- Added typed atomic config and flask mutations used by normalized-stat house
+  profiles.
 
 ### v2.0.0 (Modern PoB engine contract)
 

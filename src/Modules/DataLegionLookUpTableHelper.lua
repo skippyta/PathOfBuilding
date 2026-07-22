@@ -66,7 +66,10 @@ local function loadJewelFile(jewelTypeName)
 
 	if jewelData == nil then
 		ConPrintf("Failed to load either file: " .. jewelTypeName .. ".zip, " .. jewelTypeName .. ".bin")
-	else
+	elseif not _G.POB_API_STDIO_MODE then
+		-- Multiple headless workers share one engine checkout. They must not race
+		-- while creating ignored .bin caches; canonical compressed inputs are
+		-- inflated independently in each process instead.
 		local uncompressedFile = io.open(scriptPath .. jewelTypeName .. ".bin", "wb+")
 		if uncompressedFile then
 			uncompressedFile:write(jewelData)

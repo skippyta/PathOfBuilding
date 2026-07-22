@@ -11,6 +11,7 @@ local function has_flag(flag)
 end
 
 local API_STDIO_MODE = os.getenv("POB_API_STDIO") == "1" or has_flag("--stdio")
+_G.POB_API_STDIO_MODE = API_STDIO_MODE
 
 
 -- Callbacks
@@ -89,7 +90,53 @@ function GetAsyncCount()
 end
 
 -- Search Handles
-function NewFileSearch() end
+local fileSearchClass = { }
+fileSearchClass.__index = fileSearchClass
+
+local function file_exists(path)
+	local file = io.open(path, "rb")
+	if not file then return false end
+	file:close()
+	return true
+end
+
+function fileSearchClass:GetFileName()
+	local path = self.paths[self.index]
+	return path and path:match("([^/\\]+)$") or nil
+end
+
+function fileSearchClass:GetFileModifiedTime()
+	-- Source checkouts do not expose a portable stat API. Tracked compressed
+	-- inputs are the canonical headless source, so all discovered files share
+	-- one stable comparison value.
+	return 1
+end
+
+function fileSearchClass:NextFile()
+	if self.index >= #self.paths then return false end
+	self.index = self.index + 1
+	return true
+end
+
+function NewFileSearch(pattern)
+	if type(pattern) ~= "string" then return nil end
+	-- Headless mode always reads tracked compressed LUTs. It never trusts or
+	-- races on generated .bin cache files left by another process.
+	if API_STDIO_MODE and pattern:match("%.bin$") then return nil end
+	local paths = { }
+	if pattern:sub(-1) == "*" and not pattern:sub(1, -2):find("*", 1, true) then
+		local prefix = pattern:sub(1, -2)
+		for part = 0, 999 do
+			local candidate = prefix .. tostring(part)
+			if not file_exists(candidate) then break end
+			table.insert(paths, candidate)
+		end
+	elseif not pattern:find("*", 1, true) and file_exists(pattern) then
+		table.insert(paths, pattern)
+	end
+	if #paths == 0 then return nil end
+	return setmetatable({ paths = paths, index = 1 }, fileSearchClass)
+end
 
 -- General Functions
 function SetWindowTitle(title) end
@@ -105,15 +152,53 @@ function Deflate(data)
 	-- TODO: Might need this
 	return ""
 end
+
+local zlibFfi
+local zlibLibrary
+local function load_zlib()
+	if zlibFfi and zlibLibrary then return zlibFfi, zlibLibrary end
+	local okFfi, ffi = pcall(require, "ffi")
+	if not okFfi then return nil, nil end
+	pcall(ffi.cdef, [[
+		int uncompress(unsigned char *dest, unsigned long *destLen,
+			const unsigned char *source, unsigned long sourceLen);
+	]])
+	for _, name in ipairs({ "z", "zlib1", "libz" }) do
+		local okLibrary, library = pcall(ffi.load, name)
+		if okLibrary then
+			zlibFfi = ffi
+			zlibLibrary = library
+			return zlibFfi, zlibLibrary
+		end
+	end
+	return nil, nil
+end
+
 function Inflate(data)
-	-- TODO: And this
-	return ""
+	if type(data) ~= "string" then return nil, "compressed data must be a string" end
+	if #data == 0 then return "" end
+	local ffi, zlib = load_zlib()
+	if not ffi or not zlib then return nil, "zlib is unavailable" end
+	local capacity = math.max(#data * 4, 4096)
+	local maximumCapacity = 1024 * 1024 * 1024
+	while capacity <= maximumCapacity do
+		local output = ffi.new("unsigned char[?]", capacity)
+		local outputLength = ffi.new("unsigned long[1]", capacity)
+		local result = zlib.uncompress(output, outputLength, data, #data)
+		if result == 0 then
+			return ffi.string(output, tonumber(outputLength[0]))
+		elseif result ~= -5 then
+			return nil, "zlib inflate failed with code " .. tostring(result)
+		end
+		capacity = capacity * 2
+	end
+	return nil, "inflated data exceeds the headless safety limit"
 end
 function GetTime()
 	return 0
 end
 function GetScriptPath()
-	return ""
+	return rawget(_G, "POB_SCRIPT_DIR") or ""
 end
 function GetRuntimePath()
 	return ""

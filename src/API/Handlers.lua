@@ -57,7 +57,7 @@ end
 -- and verified against. The latter is a compatibility provenance marker, not
 -- a claim that a packaged runtime still has Git metadata available.
 local API_VERSION = "2.2.0"
-local ENGINE_BASE_REVISION = "78951a2e7d23bc0bb78e4a2ff777b82e1e54dc1f"
+local ENGINE_BASE_REVISION = "b32759ab0f31a1c8499a0d420cb0f0633d4fe478"
 local CAPABILITIES = {
   'add_gem',
   'add_item_text',

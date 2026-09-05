@@ -421,6 +421,8 @@ function CalcBreakdownClass:AddModSection(sectionData, modList)
 			row.sourceName = row.mod.source:match("Pantheon:(.+)")
 		elseif sourceType == "Spectre" then
 			row.sourceName = row.mod.source:match("Spectre:(.+)")
+		elseif sourceType == "Custom" then
+			row.sourceName = row.mod.source:match("Custom:(.+)")
 		end
 
 		if row.mod.flags ~= 0 or row.mod.keywordFlags ~= 0 then
@@ -474,6 +476,8 @@ function CalcBreakdownClass:AddModSection(sectionData, modList)
 					if not desc then
 						desc = "Skill type: "..(tag.neg and "Not " or "").."?"
 					end
+				elseif tag.type == "BaseFlag" then
+					desc = "Base flag: "..(tag.neg and "Not " or "")..self:FormatModName(tostring(tag.baseFlag))
 				elseif tag.type == "SlotNumber" then
 					desc = "When in slot #"..tag.num
 				elseif tag.type == "GlobalEffect" then

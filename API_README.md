@@ -29,7 +29,7 @@ diagnostics are written to stderr.
 Upon startup, the server sends a ready message to stdout:
 
 ```json
-{"ok":true,"ready":true,"version":{"number":"2.65.0","protocolVersion":"2.2.0","engineBaseRevision":"78951a2e7d23bc0bb78e4a2ff777b82e1e54dc1f","capabilities":["get_stats","set_tree","..."]}}
+{"ok":true,"ready":true,"version":{"number":"2.67.2","protocolVersion":"2.2.0","engineBaseRevision":"b32759ab0f31a1c8499a0d420cb0f0633d4fe478","capabilities":["get_stats","set_tree","..."]}}
 ```
 
 ### Sending Commands
@@ -83,7 +83,7 @@ Get version information about Path of Building and the API.
     "platform":"linux",
     "apiVersion":"2.2.0",
     "protocolVersion":"2.2.0",
-    "engineBaseRevision":"78951a2e7d23bc0bb78e4a2ff777b82e1e54dc1f",
+    "engineBaseRevision":"b32759ab0f31a1c8499a0d420cb0f0633d4fe478",
     "capabilities":["get_stats","set_tree","..."]
   }
 }
@@ -722,3 +722,10 @@ POB_API_STDIO=1 luajit src/HeadlessWrapper.lua
 ## Support
 
 For issues specific to this API implementation, please open an issue on the fork repository. For general Path of Building questions, refer to the main PoB project.
+
+## Audited 3.29 engine update
+
+The bridge now targets upstream release v2.67.2 (b32759ab). Protocol and API
+remain 2.2.0. Tree metadata comes from the loaded passive specification, not
+the unrelated targetVersion save-format marker. Headless jewel loading bypasses
+shared binary caches after the upstream loader refactor.

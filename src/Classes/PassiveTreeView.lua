@@ -14,7 +14,17 @@ local m_floor = math.floor
 local band = bit.band
 local b_rshift = bit.rshift
 
+local JEWEL_RADIUS_TINT_NEUTRAL = { 1, 1, 1, 0.7 }
+local JEWEL_RADIUS_TINT_PRIMARY_ONLY = { 1, 0, 0, 0.7 }
+local JEWEL_RADIUS_TINT_COMPARE_ONLY = { 0, 1, 0, 0.7 }
+
 local gemTooltip = LoadModule("Classes/GemTooltip")
+
+local function isAbyssConquered(node)
+	local conqueror = node and node.conqueredBy and node.conqueredBy.conqueror
+	return conqueror and conqueror.type and conqueror.type:match("^abyss_")
+end
+
 local PassiveTreeViewClass = newClass("PassiveTreeView", function(self)
 	self.ring = NewImageHandle()
 	self.ring:Load("Assets/ring.png", "CLAMP")
@@ -144,6 +154,13 @@ function PassiveTreeViewClass:GetJewelSocketOverlay(jewel, isExpansion)
 	end
 end
 
+local function compareJewelsEqual(a, b)
+	if not a or not b then
+		return a == b
+	end
+	return a:BuildRaw() == b:BuildRaw()
+end
+
 -- Returns the draw color for a node when compare overlay is active.
 -- Handles diff coloring for allocated/unallocated, mastery changes, and jewel socket differences.
 function PassiveTreeViewClass:GetCompareNodeColor(node, compareNode, spec, build, nodeDefaultColor)
@@ -160,9 +177,7 @@ function PassiveTreeViewClass:GetCompareNodeColor(node, compareNode, spec, build
 		local pJewelId = spec.jewels[node.id]
 		local pJewel = pJewelId and build.itemsTab.items[pJewelId]
 		local cJewel = self:GetCompareJewel(node.id)
-		local pName = pJewel and pJewel.name or ""
-		local cName = cJewel and cJewel.name or ""
-		if pName ~= cName then
+		if not compareJewelsEqual(pJewel, cJewel) then
 			return 0, 0, 1
 		end
 	end
@@ -698,7 +713,22 @@ function PassiveTreeViewClass:Draw(build, viewPort, inputEvents)
 			setConnectorColor(0.75, 0.75, 0.75)
 		end
 		SetDrawColor(unpack(connectorColor))
-		DrawImageQuad(tree.assets[connector.type..state].handle, unpack(connector.c))
+		local assetName = connector.type .. state
+		-- The game uses Abyss connector art only when both connected nodes are conquered.
+		if isAbyssConquered(node1) and isAbyssConquered(node2) then
+			assetName = "Abyss" .. assetName
+		end
+		local asset = tree.assets[assetName] or tree.assets[connector.type..state]
+		-- Atlas assets provide bounds that map the usual connector coordinates into one sprite.
+		local left, top = asset[1] or 0, asset[2] or 0
+		local width, height = (asset[3] or 1) - left, (asset[4] or 1) - top
+		local c = connector.c
+		DrawImageQuad(asset.handle,
+			c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8],
+			left + c[9] * width, top + c[10] * height,
+			left + c[11] * width, top + c[12] * height,
+			left + c[13] * width, top + c[14] * height,
+			left + c[15] * width, top + c[16] * height)
 	end
 
 	-- Draw the connecting lines between nodes
@@ -847,6 +877,16 @@ function PassiveTreeViewClass:Draw(build, viewPort, inputEvents)
 				base = node.sprites[node.type:lower()..(isAlloc and "Active" or "Inactive")]
 				local overlayKey = state .. (node.ascendancyName and "Ascend" or "") .. (node.isBlighted and "Blighted" or "")
 				local overlayName = node.overlay[overlayKey]
+				if isAbyssConquered(node) and (node.type == "Notable" or node.type == "Keystone") then
+					-- AlternateTreeArt gives Abyss replacements their own notable,
+					-- keystone, and ascendancy-notable frames.
+					local frameType = node.ascendancyName and "Ascendancy" or node.type
+					local frameState = state == "alloc" and "Allocated" or state == "path" and "CanAllocate" or "Unallocated"
+					local abyssOverlay = "Abyss" .. frameType .. "Frame" .. frameState
+					if tree.assets[abyssOverlay] then
+						overlayName = abyssOverlay
+					end
+				end
 				if node.ascendancyName then
 					local prefix = node.bloodlineOverlayPrefix or (tree.bloodlineSpritePrefixes and tree.bloodlineSpritePrefixes[node.ascendancyName])
 					if prefix and overlayName then
@@ -1115,80 +1155,93 @@ function PassiveTreeViewClass:Draw(build, viewPort, inputEvents)
 	end
 
 	-- Draw ring overlays for jewel sockets
+	local function drawJewelRadius(jewel, scrX, scrY, tint)
+		-- Abyss jewels do not show radius art in game.
+		if isAbyssConquered(jewel.jewelData) then
+			return
+		end
+		local radData = build.data.jewelRadius[jewel.jewelRadiusIndex]
+		local outerSize = radData.outer * scale
+		local innerSize = radData.inner * scale * 1.06
+		SetDrawColor(tint[1], tint[2], tint[3], tint[4])
+		if jewel.title:match("Impossible Escape") then
+			-- Impossible Escape ring shows on the allocated Keystone
+			for keystoneName, _ in pairs(jewel.jewelData.impossibleEscapeKeystones) do
+				local keystone = spec.tree.keystoneMap[keystoneName]
+				if keystone and keystone.x and keystone.y then
+					innerSize = 150 * scale
+					local keyX, keyY = treeToScreen(keystone.x, keystone.y)
+					self:DrawImageRotated(self.jewelShadedOuterRing, keyX, keyY, outerSize * 2, outerSize * 2, -0.8)
+					self:DrawImageRotated(self.jewelShadedOuterRingFlipped, keyX, keyY, outerSize * 2, outerSize * 2, 1)
+					self:DrawImageRotated(self.jewelShadedInnerRing, keyX, keyY, innerSize * 2, innerSize * 2, -1.2)
+					self:DrawImageRotated(self.jewelShadedInnerRingFlipped, keyX, keyY, innerSize * 2, innerSize * 2, 1.0)
+				end
+			end
+		elseif jewel.title:match("^Brutal Restraint") then
+			self:DrawImageRotated(self.maraketh1, scrX, scrY, outerSize * 2, outerSize * 2, -0.7)
+			self:DrawImageRotated(self.maraketh2, scrX, scrY, outerSize * 2, outerSize * 2, 0.7)
+		elseif jewel.title:match("^Elegant Hubris") then
+			self:DrawImageRotated(self.eternal1, scrX, scrY, outerSize * 2, outerSize * 2, -0.7)
+			self:DrawImageRotated(self.eternal2, scrX, scrY, outerSize * 2, outerSize * 2, 0.7)
+		elseif jewel.title:match("^Glorious Vanity") then
+			self:DrawImageRotated(self.vaal1, scrX, scrY, outerSize * 2, outerSize * 2, -0.7)
+			self:DrawImageRotated(self.vaal2, scrX, scrY, outerSize * 2, outerSize * 2, 0.7)
+		elseif jewel.title:match("^Lethal Pride") then
+			self:DrawImageRotated(self.karui1, scrX, scrY, outerSize * 2, outerSize * 2, -0.7)
+			self:DrawImageRotated(self.karui2, scrX, scrY, outerSize * 2, outerSize * 2, 0.7)
+		elseif jewel.title:match("^Militant Faith") then
+			self:DrawImageRotated(self.templar1, scrX, scrY, outerSize * 2, outerSize * 2, -0.7)
+			self:DrawImageRotated(self.templar2, scrX, scrY, outerSize * 2, outerSize * 2, 0.7)
+		elseif jewel.title:match("^Heroic Tragedy") then
+			self:DrawImageRotated(self.kalguur1, scrX, scrY, outerSize * 2, outerSize * 2, -0.7)
+			self:DrawImageRotated(self.kalguur2, scrX, scrY, outerSize * 2, outerSize * 2, 0.7)
+		else
+			self:DrawImageRotated(self.jewelShadedOuterRing, scrX, scrY, outerSize * 2, outerSize * 2, -0.7)
+			self:DrawImageRotated(self.jewelShadedOuterRingFlipped, scrX, scrY, outerSize * 2, outerSize * 2, 0.7)
+			self:DrawImageRotated(self.jewelShadedInnerRing, scrX, scrY, innerSize * 2, innerSize * 2, -0.7)
+			self:DrawImageRotated(self.jewelShadedInnerRingFlipped, scrX, scrY, innerSize * 2, innerSize * 2, 0.7)
+		end
+	end
 	SetDrawLayer(nil, 25)
 	for nodeId in pairs(tree.sockets) do
 		local node = spec.nodes[nodeId]
 		if node and node.name ~= "Charm Socket" and (not node.expansionJewel or node.expansionJewel.size == 2) then
 			local scrX, scrY = treeToScreen(node.x, node.y)
 			local socket, jewel = build.itemsTab:GetSocketAndJewelForNodeID(nodeId)
+			local compareNode = self.compareSpec and self.compareSpec.nodes[nodeId] or nil
+			local cJewel = self.compareSpec and self:GetCompareJewel(nodeId) or nil
 			if node == hoverNode then
-				local isThreadOfHope = jewel and jewel.jewelRadiusLabel == "Variable"
-				if isThreadOfHope then
-					for _, radData in ipairs(build.data.jewelRadius) do
-						local outerSize = radData.outer * scale
-						local innerSize = radData.inner * scale
-						-- Jewel in socket is Thread of Hope or similar, draw it's annulus
+				local effectiveJewel = jewel or cJewel
+				local isThreadOfHope = effectiveJewel and effectiveJewel.jewelRadiusLabel == "Variable"
+				for _, radData in ipairs(build.data.jewelRadius) do
+					local outerSize = radData.outer * scale
+					local innerSize = radData.inner * scale
+					if isThreadOfHope then
+						-- Thread of Hope-like: draw the annulus (only radii with a non-zero inner)
 						if innerSize ~= 0 then
 							SetDrawColor(radData.col)
 							DrawImage(self.ring, scrX - outerSize, scrY - outerSize, outerSize * 2, outerSize * 2)
 							DrawImage(self.ring, scrX - innerSize, scrY - innerSize, innerSize * 2, innerSize * 2)
 						end
-					end
-				else
-					for _, radData in ipairs(build.data.jewelRadius) do
-						local outerSize = radData.outer * scale
-						local innerSize = radData.inner * scale
-						-- Jewel in socket is not Thread of Hope or similar, draw normal jewel radius
+					else
+						-- Standard jewel: draw the full-disc radii (inner == 0)
 						if innerSize == 0 then
 							SetDrawColor(radData.col)
 							DrawImage(self.ring, scrX - outerSize, scrY - outerSize, outerSize * 2, outerSize * 2)
 						end
 					end
 				end
-			elseif node.alloc then
-				if jewel and jewel.jewelRadiusIndex then
-					-- Draw only the selected jewel radius
-					local radData = build.data.jewelRadius[jewel.jewelRadiusIndex]
-					local outerSize = radData.outer * scale
-					local innerSize = radData.inner * scale * 1.06
-					SetDrawColor(1,1,1,0.7)
-					if jewel.title:match("Impossible Escape") then
-						-- Impossible Escape ring shows on the allocated Keystone
-						for keystoneName, _ in pairs(jewel.jewelData.impossibleEscapeKeystones) do
-							local keystone = spec.tree.keystoneMap[keystoneName]
-							if keystone and keystone.x and keystone.y then
-								innerSize = 150 * scale
-								local keyX, keyY = treeToScreen(keystone.x, keystone.y)
-								self:DrawImageRotated(self.jewelShadedOuterRing, keyX, keyY, outerSize * 2, outerSize * 2, -0.8)
-								self:DrawImageRotated(self.jewelShadedOuterRingFlipped, keyX, keyY, outerSize * 2, outerSize * 2, 1)
-								self:DrawImageRotated(self.jewelShadedInnerRing, keyX, keyY, innerSize * 2, innerSize * 2, -1.2)
-								self:DrawImageRotated(self.jewelShadedInnerRingFlipped, keyX, keyY, innerSize * 2, innerSize * 2, 1.0)
-							end
-						end
-					elseif jewel.title:match("^Brutal Restraint") then
-						self:DrawImageRotated(self.maraketh1, scrX, scrY, outerSize * 2, outerSize * 2, -0.7)
-						self:DrawImageRotated(self.maraketh2, scrX, scrY, outerSize * 2, outerSize * 2, 0.7)
-					elseif jewel.title:match("^Elegant Hubris") then
-						self:DrawImageRotated(self.eternal1, scrX, scrY, outerSize * 2, outerSize * 2, -0.7)
-						self:DrawImageRotated(self.eternal2, scrX, scrY, outerSize * 2, outerSize * 2, 0.7)
-					elseif jewel.title:match("^Glorious Vanity") then
-						self:DrawImageRotated(self.vaal1, scrX, scrY, outerSize * 2, outerSize * 2, -0.7)
-						self:DrawImageRotated(self.vaal2, scrX, scrY, outerSize * 2, outerSize * 2, 0.7)
-					elseif jewel.title:match("^Lethal Pride") then
-						self:DrawImageRotated(self.karui1, scrX, scrY, outerSize * 2, outerSize * 2, -0.7)
-						self:DrawImageRotated(self.karui2, scrX, scrY, outerSize * 2, outerSize * 2, 0.7)
-					elseif jewel.title:match("^Militant Faith") then
-						self:DrawImageRotated(self.templar1, scrX, scrY, outerSize * 2, outerSize * 2, -0.7)
-						self:DrawImageRotated(self.templar2, scrX, scrY, outerSize * 2, outerSize * 2, 0.7)
-					elseif jewel.title:match("^Heroic Tragedy") then
-						self:DrawImageRotated(self.kalguur1, scrX, scrY, outerSize * 2, outerSize * 2, -0.7)
-						self:DrawImageRotated(self.kalguur2, scrX, scrY, outerSize * 2, outerSize * 2, 0.7)
-					else
-						self:DrawImageRotated(self.jewelShadedOuterRing, scrX, scrY, outerSize * 2, outerSize * 2, -0.7)
-						self:DrawImageRotated(self.jewelShadedOuterRingFlipped, scrX, scrY, outerSize * 2, outerSize * 2, 0.7)
-						self:DrawImageRotated(self.jewelShadedInnerRing, scrX, scrY, innerSize * 2, innerSize * 2, -0.7)
-						self:DrawImageRotated(self.jewelShadedInnerRingFlipped, scrX, scrY, innerSize * 2, innerSize * 2, 0.7)
-					end
+			end
+			if node.alloc or (compareNode and compareNode.alloc) then
+				local pHasRadius = jewel and jewel.jewelRadiusIndex
+				local cHasRadius = cJewel and cJewel.jewelRadiusIndex
+				local sameJewel = compareJewelsEqual(jewel, cJewel)
+				if pHasRadius then
+					local tint = (not self.compareSpec or sameJewel) and JEWEL_RADIUS_TINT_NEUTRAL or JEWEL_RADIUS_TINT_PRIMARY_ONLY
+					drawJewelRadius(jewel, scrX, scrY, tint)
+				end
+				if cHasRadius and not sameJewel then
+					drawJewelRadius(cJewel, scrX, scrY, JEWEL_RADIUS_TINT_COMPARE_ONLY)
 				end
 			end
 		end
@@ -1407,30 +1460,40 @@ function PassiveTreeViewClass:AddNodeTooltip(tooltip, node, build)
 	self.skillTooltip:Clear()
 	tooltip.center = true
 	tooltip.maxWidth = 800
+	-- Appends the compare spec's jewel tooltip if it has a jewel in this allocated socket.
+	local function addCompareJewelSection(socket, withLabel)
+		local cJewel = self.compareSpec and self:GetCompareJewel(node.id)
+		local cAllocated = self.compareSpec and self.compareSpec.allocNodes and self.compareSpec.allocNodes[node.id]
+		if not cJewel or not cAllocated then
+			return false
+		end
+		if withLabel then
+			tooltip:AddSeparator(14)
+			tooltip:AddLine(14, colorCodes.DEXTERITY .. "Compared build:")
+		end
+		self.compareSpec.build.itemsTab:AddItemTooltip(tooltip, cJewel, socket)
+		return true
+	end
+
 	-- Special case for sockets
 	if node.type == "Socket" and node.alloc then
 		local socket, jewel = build.itemsTab:GetSocketAndJewelForNodeID(node.id)
+		local cJewel = self.compareSpec and self:GetCompareJewel(node.id) or nil
 		if jewel then
 			build.itemsTab:AddItemTooltip(tooltip, jewel, socket)
-			if node.distanceToClassStart and node.distanceToClassStart > 0 then
-				tooltip:AddSeparator(14)
-				tooltip:AddLine(16, string.format("^7Distance to start: %d", node.distanceToClassStart))
+			if not compareJewelsEqual(jewel, cJewel) then
+				addCompareJewelSection(socket, true)
 			end
-		else
+		elseif not addCompareJewelSection(socket, false) then
 			self:AddNodeName(tooltip, node, build)
 		end
-		-- Show compare build's jewel info when in overlay compare mode
-		if self.compareSpec then
-			local cJewel = self:GetCompareJewel(node.id)
-			local cAllocated = self.compareSpec.allocNodes and self.compareSpec.allocNodes[node.id]
-			if cJewel then
-				tooltip:AddSeparator(14)
-				tooltip:AddLine(16, colorCodes.WARNING .. "Compared build jewel:")
-				tooltip:AddLine(16, (cJewel.rarity == "UNIQUE" and colorCodes.UNIQUE or cJewel.rarity == "RARE" and colorCodes.RARE or cJewel.rarity == "MAGIC" and colorCodes.MAGIC or "^7") .. cJewel.name)
-			elseif cAllocated then
-				tooltip:AddSeparator(14)
-				tooltip:AddLine(16, colorCodes.WARNING .. "Compared build: ^7(empty socket)")
-			end
+		if self.compareSpec and self.compareSpec.allocNodes and self.compareSpec.allocNodes[node.id] and not cJewel then
+			tooltip:AddSeparator(14)
+			tooltip:AddLine(16, colorCodes.WARNING .. "Compared build: ^7(empty socket)")
+		end
+		if node.distanceToClassStart and node.distanceToClassStart > 0 then
+			tooltip:AddSeparator(14)
+			tooltip:AddLine(16, string.format("^7Distance to start: %d", node.distanceToClassStart))
 		end
 		tooltip:AddSeparator(14)
 		if socket:IsEnabled() then
@@ -1441,16 +1504,9 @@ function PassiveTreeViewClass:AddNodeTooltip(tooltip, node, build)
 	end
 
 	-- For unallocated sockets, show compare build's jewel if it has one
-	if node.type == "Socket" and not node.alloc and self.compareSpec then
-		local cJewel = self:GetCompareJewel(node.id)
-		local cItemsTab = self.compareSpec.build and self.compareSpec.build.itemsTab
-		local cAllocated = self.compareSpec.allocNodes and self.compareSpec.allocNodes[node.id]
-		if cJewel and cAllocated then
-			-- Show the compare build's jewel tooltip instead of generic socket info
-			local socket = build.itemsTab:GetSocketAndJewelForNodeID(node.id)
-			cItemsTab:AddItemTooltip(tooltip, cJewel, socket)
-			tooltip:AddSeparator(14)
-			tooltip:AddLine(14, colorCodes.DEXTERITY .. "Jewel from compared build")
+	if node.type == "Socket" and not node.alloc then
+		local socket = build.itemsTab:GetSocketAndJewelForNodeID(node.id)
+		if addCompareJewelSection(socket, false) then
 			tooltip:AddLine(14, colorCodes.TIP.."Tip: Hold Shift or Ctrl to hide this tooltip.")
 			return
 		end
@@ -1526,15 +1582,17 @@ function PassiveTreeViewClass:AddNodeTooltip(tooltip, node, build)
 		local lineCount = 0
 		for n, effect in ipairs(mNode.masteryEffects) do
 			local existingMastery = isValueInTable(build.spec.masterySelections, effect.effect)
-			if not existingMastery then
-				effect = build.spec.tree.masteryEffects[effect.effect]
-				for _, line in ipairs(effect.sd) do
-					lineCount = lineCount + 1
+			local effectData = build.spec.tree.masteryEffects[effect.effect]
+			-- Must step through every mod, and filter out already allocated mods later 
+			-- Otherwise red not supported text applies to the wrong indexes
+			for _, line in ipairs(effectData.sd) do
+				lineCount = lineCount + 1
+				if not existingMastery then
 					addModInfoToTooltip(mNode, lineCount, line)
 				end
-				if n < #mNode.masteryEffects then
-					tooltip:AddLine(6, "")
-				end
+			end
+			if not existingMastery and n < #mNode.masteryEffects then
+				tooltip:AddLine(6, "")
 			end
 		end
 		tooltip:AddSeparator(14)

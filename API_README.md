@@ -730,5 +730,5 @@ remain 2.2.0. Tree metadata comes from the loaded passive specification, not
 the unrelated targetVersion save-format marker. Headless jewel loading bypasses
 shared binary caches after the upstream loader refactor.
 
-Linux runtimes may provide only the versioned zlib soname `libz.so.1`; the
+Linux runtimes may provide only the versioned zlib library name `libz.so.1`; the
 headless inflater accepts it without requiring development-library symlinks.

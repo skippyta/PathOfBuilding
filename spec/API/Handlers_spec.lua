@@ -92,6 +92,8 @@ describe('Handlers API via stdio', function()
     assert.is_number(saw.info.level)
     assert.is_string(saw.info.className or '')
     assert.is_table(saw.stats._meta or {})
+    assert.are.equal(saw.tree.treeVersion, saw.stats._meta.treeVersion)
+    assert.are.equal(saw.tree.treeVersion, saw.info.treeVersion)
   end)
 
   it('updates level and config', function()

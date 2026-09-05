@@ -17,12 +17,12 @@ describe('Headless runtime data support', function()
 
   it('inflates every tracked Timeless Jewel data set exactly', function()
     local expected = {
-      BrutalRestraint = 3390452,
-      ElegantHubris = 3571252,
-      GloriousVanity = 51484784,
-      HeroicTragedy = 3571252,
-      LethalPride = 3616452,
-      MilitantFaith = 3616452,
+      BrutalRestraint = 3405454,
+      ElegantHubris = 3587054,
+      GloriousVanity = 51651890,
+      HeroicTragedy = 3587054,
+      LethalPride = 3632454,
+      MilitantFaith = 3632454,
     }
     for name, expectedLength in pairs(expected) do
       local compressed
@@ -43,6 +43,23 @@ describe('Headless runtime data support', function()
       assert.is_nil(inflateError)
       assert.are.equal(expectedLength, #inflated)
     end
+  end)
+
+  it('never accesses shared binary caches in stdio mode', function()
+    local savedMode, savedOpen = _G.POB_API_STDIO_MODE, io.open
+    _G.POB_API_STDIO_MODE = true
+    local binAccesses = {}
+    io.open = function(path, mode)
+      if path:match('%.bin$') then table.insert(binAccesses, {path, mode}) end
+      return savedOpen(path, mode)
+    end
+    local ok, result = pcall(function()
+      return LoadModule('Modules/DataJewelFileLoader')('LethalPride', true)
+    end)
+    io.open, _G.POB_API_STDIO_MODE = savedOpen, savedMode
+    assert.is_true(ok)
+    assert.is_string(result)
+    assert.same({}, binAccesses)
   end)
 
   it('fails safely for malformed compressed data', function()

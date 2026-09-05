@@ -1,4 +1,5 @@
 -- API/BuildOps.lua
+-- cspell:ignore jsontype
 -- Thin wrappers around PoB headless objects for programmatic operations
 
 local M = {}
@@ -159,8 +160,8 @@ function M.export_stats(fields)
   end
   -- include some metadata if available
   result._meta = result._meta or {}
-  if build and build.targetVersion then
-    result._meta.treeVersion = tostring(build.targetVersion)
+  if build and build.spec then
+    result._meta.treeVersion = build.spec.treeVersion
   end
   if build and build.characterLevel then
     result._meta.level = tonumber(build.characterLevel)
@@ -283,7 +284,7 @@ function M.get_build_info()
     level = build.characterLevel,
     className = build and build.buildClassName or (build.Build and build.Build.className) or nil,
     ascendClassName = build and build.buildAscendName or (build.Build and build.Build.ascendClassName) or nil,
-    treeVersion = build.targetVersion or (build.spec and build.spec.treeVersion) or nil,
+    treeVersion = build.spec and build.spec.treeVersion or nil,
   }
   return info
 end

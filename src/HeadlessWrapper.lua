@@ -163,7 +163,7 @@ local function load_zlib()
 		int uncompress(unsigned char *dest, unsigned long *destLen,
 			const unsigned char *source, unsigned long sourceLen);
 	]])
-	for _, name in ipairs({ "z", "zlib1", "libz" }) do
+	for _, name in ipairs({ "z", "libz.so.1", "zlib1", "libz" }) do
 		local okLibrary, library = pcall(ffi.load, name)
 		if okLibrary then
 			zlibFfi = ffi

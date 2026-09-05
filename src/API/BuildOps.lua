@@ -1,4 +1,5 @@
 -- API/BuildOps.lua
+-- cspell:ignore jsontype
 -- Thin wrappers around PoB headless objects for programmatic operations
 
 local M = {}

@@ -1126,7 +1126,7 @@ function M.create_spec(params)
   local source = build.treeTab.specList[sourceIndex]
   if not source then return nil, 'copyFrom spec not found' end
 
-  local newSpec = new('PassiveSpec', build, source.treeVersion)
+  local newSpec = new('PassiveSpec'):PassiveSpec(build, source.treeVersion)
   local state = source:CreateUndoState()
   state.secondaryAscendClassId = source.curSecondaryAscendClassId or 0
   newSpec.jewels = copyTable(source.jewels or {}, true)

@@ -2,7 +2,7 @@ if not loadStatFile then
 	dofile("statdesc.lua")
 end
 local utils = LoadModule("../Modules/Utils")
-loadStatFile("tincture_stat_descriptions.txt")
+loadStatFile("tincture_stat_descriptions.csd")
 
 local s_format = string.format
 
@@ -280,7 +280,7 @@ directiveTable.base = function(state, args, out)
 			reqLevel = baseItemType.DropLevel
 		end
 	end
-	if flask then
+	if flask or tincture then
 		if baseItemType.DropLevel > 2 then
 			reqLevel = baseItemType.DropLevel
 		end

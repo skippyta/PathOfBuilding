@@ -64,7 +64,8 @@ describe('Stdio API', function()
     assert.is_not_nil(objs[idxVersion].version.platform)
     assert.are.equal('2.2.0', objs[idxReady].version.apiVersion)
     assert.are.equal('2.2.0', objs[idxReady].version.protocolVersion)
-    assert.are.equal('b32759ab0f31a1c8499a0d420cb0f0633d4fe478', objs[idxReady].version.engineBaseRevision)
+    assert.are.equal('e5917f81fd64c10d9bc816c410da395ed18e57ba', objs[idxReady].version.engineBaseRevision)
+    assert.are.equal('3_30', objs[idxReady].version.treeVersion)
     assert.is_table(objs[idxReady].version.capabilities)
     local capabilities = {}
     for _, capability in ipairs(objs[idxReady].version.capabilities) do

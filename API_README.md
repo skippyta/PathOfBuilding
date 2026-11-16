@@ -29,7 +29,7 @@ diagnostics are written to stderr.
 Upon startup, the server sends a ready message to stdout:
 
 ```json
-{"ok":true,"ready":true,"version":{"number":"2.67.2","protocolVersion":"2.2.0","engineBaseRevision":"b32759ab0f31a1c8499a0d420cb0f0633d4fe478","capabilities":["get_stats","set_tree","..."]}}
+{"ok":true,"ready":true,"version":{"number":"2.67.2","protocolVersion":"2.2.0","engineBaseRevision":"e5917f81fd64c10d9bc816c410da395ed18e57ba","capabilities":["get_stats","set_tree","..."]}}
 ```
 
 ### Sending Commands
@@ -83,7 +83,7 @@ Get version information about Path of Building and the API.
     "platform":"linux",
     "apiVersion":"2.2.0",
     "protocolVersion":"2.2.0",
-    "engineBaseRevision":"b32759ab0f31a1c8499a0d420cb0f0633d4fe478",
+    "engineBaseRevision":"e5917f81fd64c10d9bc816c410da395ed18e57ba",
     "capabilities":["get_stats","set_tree","..."]
   }
 }
@@ -732,3 +732,15 @@ shared binary caches after the upstream loader refactor.
 
 Linux runtimes may provide only the versioned zlib library name `libz.so.1`; the
 headless inflater accepts it without requiring development-library symlinks.
+
+### 2026-11-15 upstream development refresh
+
+The bridge targets upstream default branch `dev` at
+`e5917f81fd64c10d9bc816c410da395ed18e57ba` (142 commits after release 2.67.2).
+The upstream manifest still reports 2.67.2; the default passive tree is now
+`3_30`. Consumers must audit the exact upstream revision, not the version string.
+API and protocol remain 2.2.0. Historical build specs retain their explicit tree.
+
+The wrapper loads upstream `_SimpleGraphic.def.lua` and overrides only bridge IO:
+JSON-only stdout, script-path resolution, compressed Timeless Jewel inputs and
+read-only cache behavior. Callback state follows upstream `__mainObject__`.

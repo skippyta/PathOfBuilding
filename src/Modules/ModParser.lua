@@ -401,6 +401,7 @@ local modNameList = {
 	["to avoid being shocked"] = "AvoidShock",
 	["to avoid being frozen"] = "AvoidFreeze",
 	["to avoid being chilled"] = "AvoidChill",
+	["to avoid being chilled or frozen"] = { "AvoidChill", "AvoidFreeze" },
 	["to avoid being ignited"] = "AvoidIgnite",
 	["to avoid non-damaging ailments on you"] = { "AvoidShock", "AvoidFreeze", "AvoidChill", "AvoidSap", "AvoidBrittle", "AvoidScorch" },
 	["to avoid blind"] = "AvoidBlind",
@@ -436,6 +437,7 @@ local modNameList = {
 	["damage taken recouped as energy shield"] = "EnergyShieldRecoup",
 	["damage taken recouped as mana"] = "ManaRecoup",
 	["damage taken recouped as life, mana and energy shield"] = { "LifeRecoup", "EnergyShieldRecoup", "ManaRecoup" },
+	["recovery from recoup"] = "RecoupRecoveryAmount",
 	["missing unreserved life before being hit by an enemy"] = "MissingLifeBeforeEnemyHit",
 	["missing unreserved mana before being hit by an enemy"] = "MissingManaBeforeEnemyHit",
 	-- Stun/knockback modifiers
@@ -832,6 +834,7 @@ local modNameList = {
 	["action speed"] = "ActionSpeed",
 	["light radius"] = "LightRadius",
 	["rarity of items found"] = "LootRarity",
+	["item rarity"] = "LootRarity",
 	["rarity of items dropped"] = "LootRarity",
 	["quantity of items found"] = "LootQuantity",
 	["quantity of items dropped"] = "LootQuantity",
@@ -854,6 +857,7 @@ local modNameList = {
 	-- Flask and Tincture modifiers
 	["effect"] = "LocalEffect",
 	["effect of flasks"] = "FlaskEffect",
+	["effect of iron flasks"] = "IronFlaskEffect",
 	["effect of tinctures"] = "TinctureEffect",
 	["amount recovered"] = "FlaskRecovery",
 	["life recovered"] = "FlaskRecovery",
@@ -1573,6 +1577,7 @@ local modTagList = {
 	["w?h?i[lf]e? you have at least (%d+) maximum energy shield"] = function(num) return { tag = { type = "StatThreshold", stat = "EnergyShield", threshold = num } } end,
 	["against targets they pierce"] = { tag = { type = "StatThreshold", stat = "PierceCount", threshold = 1 } },
 	["against pierced targets"] = { tag = { type = "StatThreshold", stat = "PierceCount", threshold = 1 } },
+	["against enemies within ([%d%.]+) metres?"] = function(num) return { tag = { type = "DistanceRamp", ramp = { { num * 10, 1 }, { num * 10, 0 } } } } end,
 	["to targets they pierce"] = { tag = { type = "StatThreshold", stat = "PierceCount", threshold = 1 } },
 	["that fire a single projectile"] = { tag = { type = "StatThreshold", stat = "ProjectileCount", threshold = 1, upper = true } },
 	["w?h?i[lf]e? you have at least (%d+) devotion"] = function(num) return { tag = { type = "StatThreshold", stat = "Devotion", threshold = num } } end,
@@ -2031,6 +2036,7 @@ end
 
 local gemIdLookup = {
 	["power charge on critical strike"] = "SupportPowerChargeOnCritical",
+	["snipe support"] = "ChannelledSnipeSupport",
 }
 local skillIds = {}
 for id in pairs(data.skills) do
@@ -2069,7 +2075,7 @@ local function triggerExtraSkill(name, level, options)
 	end
 	return mods
 end
-local function extraSupport(name, level, slot)
+local function extraSupport(name, level, slot, appliesToGrantedSkills)
 	local skillId = gemIdLookup[name] or gemIdLookup[name:gsub("^increased ","")] or gemIdLookup[name:gsub(" support$","")]
 
 	if slot == "main hand" or slot == "main hand weapon" then
@@ -2082,14 +2088,15 @@ local function extraSupport(name, level, slot)
 		slot = "{SlotName}"
 	end
 
+	local slotTag = { type = "SocketedIn", slotName = slot }
 	level = tonumber(level)
 	if skillId then
 		local gemId = data.gemForBaseName[(data.skills[skillId].name .. " Support"):lower()]
 		if gemId then
-			local mods = {mod("ExtraSupport", "LIST", { skillId = data.gems[gemId].grantedEffectId, level = level }, { type = "SocketedIn", slotName = slot })}
+			local mods = { mod("ExtraSupport", "LIST", { skillId = data.gems[gemId].grantedEffectId, level = level, appliesToGrantedSkills = appliesToGrantedSkills }, slotTag) }
 			if data.gems[gemId].secondaryGrantedEffect then
 				if data.gems[gemId].secondaryGrantedEffect.support then
-					t_insert(mods, mod("ExtraSupport", "LIST", { skillId = data.gems[gemId].secondaryGrantedEffectId, level = level }, { type = "SocketedIn", slotName = slot }))
+					t_insert(mods, mod("ExtraSupport", "LIST", { skillId = data.gems[gemId].secondaryGrantedEffectId, level = level, appliesToGrantedSkills = appliesToGrantedSkills }, slotTag))
 				else
 					t_insert(mods, mod("ExtraSkill", "LIST", { skillId = data.gems[gemId].secondaryGrantedEffectId, level = level }))
 				end
@@ -2097,7 +2104,7 @@ local function extraSupport(name, level, slot)
 			return mods
 		else
 			return {
-				mod("ExtraSupport", "LIST", { skillId = skillId, level = level }, { type = "SocketedIn", slotName = slot }),
+				mod("ExtraSupport", "LIST", { skillId = skillId, level = level, appliesToGrantedSkills = appliesToGrantedSkills }, slotTag),
 			}
 		end
 	end
@@ -2116,7 +2123,15 @@ local explodeFunc = function(chance, amount, type, ...)
 	}
 end
 
+local dmgTypes = {
+	["physical"] = "Physical",
+	["lightning"] = "Lightning",
+	["cold"] = "Cold",
+	["fire"] = "Fire",
+	["chaos"] = "Chaos",
+}
 -- List of special modifiers
+---@type table<string, Mod[]|fun(num: number, ...: string): Mod[]>
 local specialModList = {
 	-- Explode mods
 	["enemies you kill have a (%d+)%% chance to explode, dealing a (.+) of their maximum life as (.+) damage"] = function(chance, _, amount, type)	-- Obliteration, Unspeakable Gifts (chaos cluster), synth implicit mod, current crusader body mod, Ngamahu Warmonger tattoo
@@ -2415,8 +2430,8 @@ local specialModList = {
 		mod("ManaConvertToArmour", "BASE", num),
 	} end,
 	["life recovery from flasks also applies to energy shield"] = { flag("LifeFlaskAppliesToEnergyShield") },
-	["increase to cast speed from arcane surge also applies to movement speed"] = { flag("ArcaneSurgeCastSpeedToMovementSpeed") },
-	["arcane surge also grants (%d+)%% increased life regeneration rate to you"] = function(num) return { mod("ArcaneSurgeAlsoLifeRegen", "BASE", num) } end,
+	["increases? to cast speed from arcane surge also applies to movement speed"] = { flag("ArcaneSurgeCastSpeedToMovementSpeed") },
+	["arcane surge also grants (%d+)%% increased life regeneration rate to you"] = function(num) return { mod("ArcaneSurgeAlsoLifeRegen", "INC", num) } end,
 	["increases and reductions to effect of flasks applied to you also applies to effect of arcane surge on you at (%d+)%% of their value"] = function(num) return { mod("FlaskEffectToArcaneSurgeEffect", "BASE", num) } end,
 	["non%-instant mana recovery from flasks is also recovered as life"] = { flag("ManaFlaskAppliesToLife") },
 	["life leech effects recover energy shield instead while on full life"] = { flag("ImmortalAmbition", { type = "Condition", var = "FullLife" }, { type = "Condition", var = "LeechingLife" }) },
@@ -2639,6 +2654,12 @@ local specialModList = {
 	["you and nearby allies have tailwind"] = { mod("ExtraAura", "LIST", { mod = flag("Condition:Tailwind") }) },
 	["projectiles deal (%d+)%% more damage for each remaining chain"] = function(num) return { mod("Damage", "MORE", num, nil, ModFlag.Projectile, { type = "PerStat", stat = "ChainRemaining" }) } end,
 	["projectiles deal (%d+)%% increased damage with hits and ailments for each remaining chain"] = function(num) return { mod("Damage", "INC", num, nil, 0, bor(KeywordFlag.Hit, KeywordFlag.Ailment), { type = "PerStat", stat = "ChainRemaining" }, { type = "SkillType", skillType = SkillType.Projectile }) } end,
+	["projectiles deal (%d+)%% increased damage with hits and ailments for each remaining chain, up to a maximum of (%d+)%%"] = function(num, _, limit) return {
+		mod("Damage", "INC", num, nil, 0, bor(KeywordFlag.Hit, KeywordFlag.Ailment), { type = "PerStat", stat = "ChainRemaining", globalLimit = tonumber(limit), globalLimitKey = "FollowThrough" }, { type = "SkillType", skillType = SkillType.Projectile })
+	} end,
+	["projectiles deal (%d+)%% increased damage with hits and ailments for each remaining chain, up to (%d+)%%"] = function(num, _, limit) return {
+		mod("Damage", "INC", num, nil, 0, bor(KeywordFlag.Hit, KeywordFlag.Ailment), { type = "PerStat", stat = "ChainRemaining", globalLimit = tonumber(limit), globalLimitKey = "FollowThrough" }, { type = "SkillType", skillType = SkillType.Projectile })
+	} end,
 	["projectiles deal (%d+)%% increased damage for each remaining chain"] = function(num) return { mod("Damage", "INC", num, nil, ModFlag.Projectile, { type = "PerStat", stat = "ChainRemaining" }) } end,
 	["far shot"] = { flag("FarShot") },
 	["projectiles gain damage as they travel farther, dealing up to (%d+)%% more damage with hits and ailments"] = function(num) return { mod("Damage", "MORE", num, nil, 0, bor(KeywordFlag.Hit, KeywordFlag.Ailment), { type = "DistanceRamp", ramp = { {35,0},{70,1} } }) } end,
@@ -2961,6 +2982,9 @@ local specialModList = {
 	["if diamond flask charges are consumed, (%d+)%% increased critical strike chance"] = function (num) return {
 		mod("CritChance", "INC", num, { type = "SkillType", skillType = SkillType.Triggered, neg = true }, { type = "SkillType", skillType = SkillType.Channel, neg = true }, { type = "Condition", var = "HaveDiamondFlask" })
 	} end,
+	["if diamond flask charges are consumed, %+(%d+)%% to critical strike multiplier"] = function (num) return {
+		mod("CritMultiplier", "BASE", num, { type = "SkillType", skillType = SkillType.Triggered, neg = true }, { type = "SkillType", skillType = SkillType.Channel, neg = true }, { type = "Condition", var = "HaveDiamondFlask" })
+	} end,
 	["if bismuth flask charges are consumed, penetrate (%d+)%% elemental resistances"] = function (num) return {
 		mod("ElementalPenetration", "BASE", num, { type = "SkillType", skillType = SkillType.Triggered, neg = true }, { type = "SkillType", skillType = SkillType.Channel, neg = true }, { type = "Condition", var = "HaveBismuthFlask" })
 	} end,
@@ -3044,8 +3068,8 @@ local specialModList = {
 	["(%d+)%% increased movement speed if you have equipped boots with no socketed gems"] = function(num) return { mod("MovementSpeed", "INC", num, { type = "MultiplierThreshold", var = "SocketedGemsInBoots", threshold = 0, upper = true}, { type = "Condition", var = "UsingBoots" }) } end,
 	-- Warlock
 	["spells you cast yourself gain added physical damage equal to (%d+)%% of life cost, if life cost is not higher than the maximum you could spend"] = function(num) return {
-		mod("PhysicalMin", "BASE", 1, { type = "PercentStat", stat = "LifeCost", percent = num }, { type = "StatThreshold", stat = "LifeUnreserved", thresholdStat = "LifeCost", thresholdPercent = num }),
-		mod("PhysicalMax", "BASE", 1, { type = "PercentStat", stat = "LifeCost", percent = num }, { type = "StatThreshold", stat = "LifeUnreserved", thresholdStat = "LifeCost", thresholdPercent = num }),
+		mod("PhysicalMin", "BASE", 1, { type = "PercentStat", stat = "LifeCost", percent = num, floor = true }, { type = "StatThreshold", stat = "LifeUnreserved", thresholdStat = "LifeCost" }),
+		mod("PhysicalMax", "BASE", 1, { type = "PercentStat", stat = "LifeCost", percent = num, floor = true }, { type = "StatThreshold", stat = "LifeUnreserved", thresholdStat = "LifeCost" }),
 	} end,
 	["gain maximum life instead of maximum energy shield from equipped armour items"] = { flag("ConvertArmourESToLife") },
 	-- Ritualist Bloodline
@@ -3055,6 +3079,40 @@ local specialModList = {
 	["can't use belts"] =  { mod("CanNotUseItem", "Flag", 1, { type = "DisablesItem", slotName = "Belt" }) },
 	["%+1 ring slot"] = { flag("AdditionalRingSlot") },
 	["utility flasks are disabled"] = { flag("UtilityFlasksDoNotApplyToPlayer") },
+	-- Abyssal Bloodline
+	["totems have (%d+)%% more life per maximum number of summoned totems"] = function(n)
+		return { mod("TotemLife", "MORE", n, { type = "PerStat", stat = "ActiveTotemLimit" }) }
+	end,
+	["while you have at least (%d+) hypnotic eye jewels socketed: arcane surge also grants (%d+)%% of damage taken recouped as mana to you arcane surge also grants (%d+)%% increased mana cost efficiency to you"] = function(jewels, _, recoup, costEfficiency)
+		return {
+			mod("ArcaneSurgeAlsoManaRecoup", "BASE", tonumber(recoup), { type = "MultiplierThreshold", var = "HypnoticEyeJewel", threshold = jewels }),
+			mod("ArcaneSurgeAlsoManaCostEfficiency", "INC", tonumber(costEfficiency), { type = "MultiplierThreshold", var = "HypnoticEyeJewel", threshold = jewels }),
+		}
+	end,
+	["while you have at least (%d+) ghastly eye jewels socketed: unholy might you grant also causes target's damage to penetrate (%d+)%% chaos resistance unholy might you grant also applies (%d+)%% increased effect of withered"] = function(jewels, _, pen, wither)
+		return {
+			mod("UnholyMightAlsoChaosPenetration", "BASE", tonumber(pen), { type = "MultiplierThreshold", var = "GhastlyEyeJewel", threshold = jewels }),
+			mod("UnholyMightAlsoWitherEffect", "INC", tonumber(wither), { type = "MultiplierThreshold", var = "GhastlyEyeJewel", threshold = jewels }),
+		}
+	end,
+	["while you have at least (%d+) searching eye jewels socketed: targets affected by maim you inflict cannot deal critical strikes maim you inflict causes hits against the target to have (%d+)%% more critical strike chance"] = function(jewels, _, crit)
+		return {
+			-- maim effect increases and decreases should affect this, but none exist yet
+			mod("EnemyModifier", "LIST", { mod = flag("NeverCrit", { type = "Condition", var = "Maimed" }) }, { type = "MultiplierThreshold", var = "SearchingEyeJewel", threshold = jewels }),
+			mod("EnemyModifier", "LIST", { mod = mod("SelfCritChance", "MORE", tonumber(crit), { type = "Condition", var = "Maimed" }) }, { type = "MultiplierThreshold", var = "SearchingEyeJewel", threshold = jewels }),
+		}
+	end,
+	["while you have at least (%d+) murderous eye jewels socketed: intimidate you inflict applies an extra %+(%d+)%% increased attack damage taken intimidate you inflict causes targets to deal (%d+)%% less damage"] = function(jewels, _, attackDam, lessDam)
+		return {
+			-- intimidate effect increases and decreases should affect this, but none exist yet
+			mod("EnemyModifier", "LIST",
+				{ mod = mod("DamageTaken", "INC", tonumber(attackDam), 0, ModFlag.Attack, { type = "Condition", var = "Intimidated", }), },
+				{ type = "MultiplierThreshold", var = "MurderousEyeJewel", threshold = jewels }),
+			mod("EnemyModifier", "LIST",
+				{ mod = mod("Damage", "MORE", -tonumber(lessDam), { type = "Condition", var = "Intimidated", }), },
+				{ type = "MultiplierThreshold", var = "MurderousEyeJewel", threshold = jewels }),
+		}
+	end,
 	-- Aul Bloodline
 	["action speed cannot be modified to below base value if you have equipped boots with no socketed gems"] = { mod("MinimumActionSpeed", "MAX", 100, { type = "GlobalEffect", effectType = "Global", unscalable = true }, { type = "MultiplierThreshold", var = "SocketedGemsInBoots", threshold = 0, upper = true }, { type = "Condition", var = "UsingBoots" }) },
 	["cannot be stunned if you have an equipped helmet with no socketed gems"] = { flag("StunImmune", { type = "MultiplierThreshold", var = "SocketedGemsInHelmet", threshold = 0, upper = true }, { type = "Condition", var = "UsingHelmet" }) },
@@ -3074,8 +3132,8 @@ local specialModList = {
 	-- Oshabi Bloodline
 	["unsealed spells gain (%d+)%% more damage each time their effects reoccur"] = function(num) return { mod("MaxSealDamage", "MORE", num) } end,
 	["skills gain added chaos damage equal to (%d+)%% of life cost, if life cost is not higher than the maximum you could spend"] = function(num) return {
-		mod("ChaosMin", "BASE", 1, { type = "PercentStat", stat = "LifeCost", percent = num }, { type = "StatThreshold", stat = "LifeUnreserved", thresholdStat = "LifeCost", thresholdPercent = num }),
-		mod("ChaosMax", "BASE", 1, { type = "PercentStat", stat = "LifeCost", percent = num }, { type = "StatThreshold", stat = "LifeUnreserved", thresholdStat = "LifeCost", thresholdPercent = num }),
+		mod("ChaosMin", "BASE", 1, { type = "PercentStat", stat = "LifeCost", percent = num, floor = true }, { type = "StatThreshold", stat = "LifeUnreserved", thresholdStat = "LifeCost" }),
+		mod("ChaosMax", "BASE", 1, { type = "PercentStat", stat = "LifeCost", percent = num, floor = true }, { type = "StatThreshold", stat = "LifeUnreserved", thresholdStat = "LifeCost" }),
 	} end,
 	["lose all rage on reaching maximum rage and gain wild savagery for 1 second per 10 rage lost this way"] = { flag("WildSavagery") },
 	-- Velka Bloodline
@@ -3186,7 +3244,7 @@ local specialModList = {
 	["([%+%-]%d+) to level of all elemental support gems if the stars are aligned"] = function(num) return { mod("GemProperty", "LIST", { keywordList = { "elemental", "support" }, key = "level", value = num, keyOfScaledMod = "value" }, { type = "Condition", var = "StarsAreAligned" })} end,
 	["([%+%-]%d+) to level of socketed active skill gems per (%d+) player levels"] = function(num, _, div) return { mod("GemProperty", "LIST", { keyword = "grants_active_skill", key = "level", value = num }, { type = "SocketedIn", slotName = "{SlotName}" }, { type = "Multiplier", var = "Level", div = tonumber(div) }) } end,
 	["([%+%-]%d+) to level of all (%a+) skill gems if (%d+) (%a+) items are equipped"] = function(num, _, element, thresh, influence) return { mod("GemProperty", "LIST", { keyword = element, key = "level", value = num, keyOfScaledMod = "value" }, { type = "MultiplierThreshold", var = firstToUpper(influence) .. "Item", threshold = tonumber(thresh) }) } end,
-	["([%+%-]%d+) to level of all (%a+) skill gems if a?t? ?l?e?a?s?t? ?(%d+) (%a+) (%a+) items are equipped"] = function(num, _, element, thresh, influence, influence2) return { mod("GemProperty", "LIST", { keyword = element, key = "level", value = num, keyOfScaledMod = "value" }, { type = "MultiplierThreshold", var = firstToUpper(influence) .. firstToUpper(influence2) .. "Item", threshold = tonumber(thresh) }) } end,
+	["([%+%-]%d+) to level of all (%a+) skill gems if a?t? ?l?e?a?s?t? ?(%d+) (%a+) (%a+) items are equipped"] = function(num, _, element, thresh, influence, influence2) return { mod("GemProperty", "LIST", { keywordList = { element, "grants_active_skill" }, key = "level", value = num, keyOfScaledMod = "value" }, { type = "MultiplierThreshold", var = firstToUpper(influence) .. firstToUpper(influence2) .. "Item", threshold = tonumber(thresh) }) } end,
 	["([%+%-]%d+) to level of all ?([%a%- ]*) support gems if (%d+) (%a+) items are equipped"] = function(num, _, element, thresh, influence) return { mod("GemProperty", "LIST", { keyword = element, key = "level", value = num, keyOfScaledMod = "value" }, { type = "MultiplierThreshold", var = firstToUpper(influence) .. "Item", threshold = tonumber(thresh) }) } end,
 	["([%+%-]%d+) to level of socketed skill gems per (%d+) player levels"] = function(num, _, div) return { mod("GemProperty", "LIST", { keyword = "grants_active_skill", key = "level", value = num }, { type = "SocketedIn", slotName = "{SlotName}" }, { type = "Multiplier", var = "Level", div = tonumber(div) }) } end,
 	["([%+%-]%d+) to level of socketed gems while there is a single gem socketed in this item"] = function(num) return { mod("GemProperty", "LIST", { keyword = "all", key = "level", value = num }, { type = "SocketedIn", slotName = "{SlotName}" }, { type = "MultiplierThreshold", var = "SocketedGemsIn{SlotName}", threshold = 1, equals = true }) } end,
@@ -3221,6 +3279,7 @@ local specialModList = {
 		mod("ExtraSkillMod", "LIST", { mod = flag("IgnoreElementalResistances") }, { type = "SocketedIn", slotName = "{SlotName}" }, { type = "SkillType", skillType = SkillType.Vaal }),
 		mod("ExtraSkillMod", "LIST", { mod = flag("IgnoreChaosResistance") }, { type = "SocketedIn", slotName = "{SlotName}" }, { type = "SkillType", skillType = SkillType.Vaal }),
 	},
+	["hits from socketed vaal skills ignore enemy physical damage reduction"]  = { mod("ExtraSkillMod", "LIST", { mod = flag("IgnoreEnemyPhysicalDamageReduction") }, { type = "SocketedIn", slotName = "{SlotName}" }, { type = "SkillType", skillType = SkillType.Vaal }) },
 	["hits from socketed vaal skills ignore enemy monster physical damage reduction"]  = { mod("ExtraSkillMod", "LIST", { mod = flag("IgnoreEnemyPhysicalDamageReduction") }, { type = "SocketedIn", slotName = "{SlotName}" }, { type = "SkillType", skillType = SkillType.Vaal }) },
 	["socketed vaal skills grant elusive when used"] = { flag("Condition:CanBeElusive") },
 	["damage with hits from socketed vaal skills is lucky"]  = { mod("ExtraSkillMod", "LIST", { mod = flag("LuckyHits") }, { type = "SocketedIn", slotName = "{SlotName}" }, { type = "SkillType", skillType = SkillType.Vaal }) },
@@ -3371,7 +3430,9 @@ local specialModList = {
 	["socketed [%a+]* ?gems a?r?e? ?supported by level (%d+) (.+)"] = function(num, _, support) return extraSupport(support, num) end,
 	["socketed [%a+]* ?spells a?r?e? ?supported by level (%d+) (.+)"] = function(num, _, support) return extraSupport(support, num, nil) end,
 	["skills from equipped (.+) are supported by level (%d+) (.+)"] = function(_, slot, level, support) return extraSupport(support, level, slot) end,
-	["skills socketed in your (.+) are supported by level (%d+) (.+)"] = function(_, slot, level, support) return extraSupport(support, level, slot) end,
+	-- despite the wording, this can support item granted skills
+	["skills socketed in your (.+) are supported by level (%d+) (.+)"] = function(_, slot, level, support) return extraSupport(support, level, slot, true) end,
+	["skills granted by your passive tree are supported by level (%d+) (.+)"] = function(_, level, support) return extraSupport(support, level, "passive tree", true) end,
 	["socketed support gems can also support skills from y?o?u?r? ?e?q?u?i?p?p?e?d? ?([%a%s]+)"] = function (_, itemSlotName)
 		local targetItemSlotName = "Body Armour"
 		if itemSlotName == "main hand" then
@@ -3782,7 +3843,7 @@ local specialModList = {
 	["hits with prismatic skills always ?i?n?f?l?i?c?t? (%w+)"] = function(_, type) return {
 		mod("Enemy" .. firstToUpper(type) .. "Chance", "BASE", 100, nil, ModFlag.Hit, { type = "SkillType", skillType = SkillType.RandomElement }),
 	} end,
-	["critical strikes do not [ia][np][fp]l[iy]c?t? non%-damaging ailments"] = {
+	["critical strikes do not inherently [ia][np][fp]l[iy]c?t? non%-damaging ailments"] = {
 		flag("CritsDontAlwaysChill"),
 		flag("CritsDontAlwaysFreeze"),
 		flag("CritsDontAlwaysShock"),
@@ -4288,6 +4349,8 @@ local specialModList = {
 	} end,
 	["left ring slot: cover enemies in ash for (%d+) seconds when you ignite them"] = { mod("CoveredInAshEffect", "BASE", 20, { type = "SlotNumber", num = 1 }, { type = "ActorCondition", actor = "enemy", var = "Ignited" }) },
 	["right ring slot: cover enemies in frost for (%d+) seconds when you freeze them"] = { mod("CoveredInFrostEffect", "BASE", 20, { type = "SlotNumber", num = 2 }, { type = "ActorCondition", actor = "enemy", var = "Frozen" }) },
+	["cover enemies in ash for (%d+) seconds when you ignite them"] = { mod("CoveredInAshEffect", "BASE", 20, { type = "ActorCondition", actor = "enemy", var = "Ignited" }) },
+	["cover enemies in frost for (%d+) seconds when you freeze them"] = { mod("CoveredInFrostEffect", "BASE", 20, { type = "ActorCondition", actor = "enemy", var = "Frozen" }) },
 	["nearby enemies are covered in ash"] = { mod("CoveredInAshEffect", "BASE", 20) },
 	["nearby enemies are covered in ash if you haven't moved in the past (%d+) seconds"] = function(num) return { mod("CoveredInAshEffect", "BASE", 20, { type = "MultiplierThreshold", var = "StationarySeconds", threshold = num }, { type = "Condition", var = "Stationary" }) } end,
 	["your warcries cover enemies in ash for (%d+) seconds"] = { mod("CoveredInAshEffect", "BASE", 20, { type = "Condition", var = "UsedWarcryRecently" }) },
@@ -4576,6 +4639,7 @@ local specialModList = {
 	["modifiers to number of projectiles do not apply to fireball and rolling magma"] = { flag("NoAdditionalProjectiles", { type = "SkillName", skillNameList = { "Fireball", "Rolling Magma" } }) },
 	["attack skills fire an additional projectile while wielding a claw or dagger"] = { mod("ProjectileCount", "BASE", 1, nil, ModFlag.Attack, { type = "ModFlagOr", modFlags = bor(ModFlag.Claw, ModFlag.Dagger) }) },
 	["skills fire (%d+) additional projectiles for 4 seconds after you consume a total of 12 steel shards"] = function(num) return { mod("ProjectileCount", "BASE", num, { type = "Condition", var = "Consumed12SteelShardsRecently" }) } end,
+	["skills fire (%d+) additional projectiles for 4 seconds after you consume a total of 8 steel shards"] = function(num) return { mod("ProjectileCount", "BASE", num, { type = "Condition", var = "Consumed8SteelShardsRecently" }) } end,
 	["bow attacks sacrifice a random damageable minion to fire (%d+) additional arrows?"] = function(num) return {
 		mod("ProjectileCount", "BASE", num, nil, 0, KeywordFlag.Arrow, { type = "Condition", var = "SacrificeMinionOnAttack" }, { type = "Condition", var = "HaveDamageableMinion" }, { type = "SkillType", skillType = SkillType.Triggered, neg = true }, { type = "SkillType", skillType = SkillType.SummonsTotem, neg = true })
 	} end,
@@ -4721,6 +4785,7 @@ local specialModList = {
 	["recoup effects instead occur over 3 seconds"] = { flag("3SecondRecoup") },
 	["life recoup effects instead occur over 3 seconds"] = { flag("3SecondLifeRecoup") },
 	["recoup energy shield instead of life"] = { flag("EnergyShieldRecoupInsteadOfLife") },
+	["life recoup also recovers mana"] = { flag("AddLifeRecoupToManaRecoup") },
 	["damage taken recouped as (%a+) is also recouped as energy shield"] = function(_, type) return {
 		flag("Add"..firstToUpper(type).."RecoupToEnergyShieldRecoup"),
 	} end,
@@ -4989,10 +5054,15 @@ local specialModList = {
 	["(%d+)%% increased armour per second you've been stationary, up to a maximum of (%d+)%%"] = function(num, _, limit) return {
 		mod("Armour", "INC", num, { type = "Multiplier", var = "StationarySeconds", limit = tonumber(limit / num) }, { type = "Condition", var = "Stationary" }),
 	} end,
-	["(%d+)%% of damage from hits is taken from your spectres' life before you"] = function(num) return { mod("takenFromSpectresBeforeYou", "BASE", num) } end,
+	["(%d+)%% of damage from hits is taken from your r?a?i?s?e?d? ?spectres' life before you"] = function(num) return { mod("takenFromSpectresBeforeYou", "BASE", num) } end,
 	["(%d+)%% of damage from hits is taken from your nearest totem's life before you"] = function(num) return { mod("takenFromTotemsBeforeYou", "BASE", num, { type = "Condition", var = "HaveTotem" }) } end,
 	["(%d+)%% of damage from hits is taken from void spawns' life before you per void spawn"] = function(num) return { mod("takenFromVoidSpawnBeforeYou", "BASE", num, { type = "PerStat", stat = "ActiveVoidSpawnLimit" }) } end,
 	["(%a+) resistance cannot be penetrated"] = function(_, res) return { flag("EnemyCannotPen"..(res:gsub("^%l", string.upper)).."Resistance") } end,
+	["elemental resistances cannot be penetrated"] = {
+		flag("EnemyCannotPenFireResistance"),
+		flag("EnemyCannotPenColdResistance"),
+		flag("EnemyCannotPenLightningResistance"),
+	},
 	-- Knockback
 	["cannot knock enemies back"] = { flag("CannotKnockback") },
 	["knocks back enemies if you get a critical strike with a staff"] = { mod("EnemyKnockbackChance", "BASE", 100, nil, ModFlag.Staff, { type = "Condition", var = "CriticalStrike" }) },
@@ -5305,6 +5375,15 @@ local specialModList = {
 		mod("FireDamageFromHitsTakenAsCold", "BASE", num, { type = "Condition", var = "UsingFlask" }), 
 		mod("LightningDamageFromHitsTakenAsCold", "BASE", num, { type = "Condition", var = "UsingFlask" }), 
 	} end,
+	["(%d+)%% of (%a+) and (%a+) damage from hits taken as (%a+) damage"] = function(num, _, type1, type2, type3)
+		local fromType1 = dmgTypes[type1]
+		local fromType2 = dmgTypes[type2]
+		local toType = dmgTypes[type3]
+		return fromType1 and fromType2 and toType and {
+			mod(fromType1 .. "DamageFromHitsTakenAs" .. toType, "BASE", num),
+			mod(fromType2 .. "DamageFromHitsTakenAs" .. toType, "BASE", num),
+		}
+	end,
 	["items and gems have (%d+)%% reduced attribute requirements"] = function(num) return { mod("GlobalAttributeRequirements", "INC", -num) } end,
 	["items and gems have (%d+)%% increased attribute requirements"] = function(num) return { mod("GlobalAttributeRequirements", "INC", num) } end,
 	["mana reservation of herald skills is always (%d+)%%"] = function(num) return { mod("SkillData", "LIST", { key = "ManaReservationPercentForced", value = num }, { type = "SkillType", skillType = SkillType.Herald }) } end,
@@ -5405,7 +5484,7 @@ local specialModList = {
 	["every 8 seconds, gain avatar of fire for 4 seconds"] = {
 		flag("Condition:HaveVulconus"),
 	},
-	["when hit, gain a random movement speed modifier from 40%% reduced to 100%% increased until hit again"] = {
+	["when hit, gain a random movement speed modifier from 40%% reduced to 100%% increased,? until hit again"] = {
 		flag("Condition:HaveGamblesprint"),
 	},
 	["trigger socketed curse spell when you cast a curse spell, with a ([%d%.]+) second cooldown"] = {
@@ -5508,6 +5587,7 @@ local specialModList = {
 	["hits have (%d+)%% chance to ignore enemy physical damage reduction"] = function(num) return {
 		mod("ChanceToIgnoreEnemyPhysicalDamageReduction", "BASE", num)
 	} end,
+	["hits ignore enemy physical damage reduction"] = { flag("IgnoreEnemyPhysicalDamageReduction") },
 	["hits with this weapon have (%d+)%% chance to ignore enemy physical damage reduction"] = function(num) return {
 		mod("ChanceToIgnoreEnemyPhysicalDamageReduction", "BASE", num, nil, ModFlag.Hit, { type = "Condition", var = "{Hand}Attack" }, { type = "SkillType", skillType = SkillType.Attack })
 	} end,
@@ -5582,16 +5662,16 @@ local specialModList = {
 		mod("LightningMax", "BASE", 1, nil, ModFlag.Attack, { type = "PercentStat", stat = "Mana", percent = num }),
 	} end,
 	["arc and crackling lance gains added cold damage equal to (%d+)%% of mana cost, if mana cost is not higher than the maximum you could spend"] = function(num) return {
-		mod("ColdMin", "BASE", 1, { type = "PercentStat", stat = "ManaCost", percent = num }, { type = "SkillName", skillNameList = { "Arc", "Crackling Lance" }, includeTransfigured = true }),
-		mod("ColdMax", "BASE", 1, { type = "PercentStat", stat = "ManaCost", percent = num }, { type = "SkillName", skillNameList = { "Arc", "Crackling Lance" }, includeTransfigured = true }),
+		mod("ColdMin", "BASE", 1, { type = "PercentStat", stat = "ManaCost", percent = num, floor = true }, { type = "StatThreshold", stat = "ManaCostPayablePool", thresholdStat = "ManaCost" }, { type = "SkillName", skillNameList = { "Arc", "Crackling Lance" }, includeTransfigured = true }),
+		mod("ColdMax", "BASE", 1, { type = "PercentStat", stat = "ManaCost", percent = num, floor = true }, { type = "StatThreshold", stat = "ManaCostPayablePool", thresholdStat = "ManaCost" }, { type = "SkillName", skillNameList = { "Arc", "Crackling Lance" }, includeTransfigured = true }),
 	} end,
 	["forbidden rite and dark pact gains added chaos damage equal to (%d+)%% of mana cost, if mana cost is not higher than the maximum you could spend"] = function(num) return {
-		mod("ChaosMin", "BASE", 1, { type = "PercentStat", stat = "ManaCost", percent = num }, { type = "SkillName", skillNameList = { "Forbidden Rite", "Dark Bargain" }, includeTransfigured = true }),
-		mod("ChaosMax", "BASE", 1, { type = "PercentStat", stat = "ManaCost", percent = num }, { type = "SkillName", skillNameList = { "Forbidden Rite", "Dark Bargain" }, includeTransfigured = true }),
+		mod("ChaosMin", "BASE", 1, { type = "PercentStat", stat = "ManaCost", percent = num, floor = true }, { type = "StatThreshold", stat = "ManaCostPayablePool", thresholdStat = "ManaCost" }, { type = "SkillName", skillNameList = { "Forbidden Rite", "Dark Bargain" }, includeTransfigured = true }),
+		mod("ChaosMax", "BASE", 1, { type = "PercentStat", stat = "ManaCost", percent = num, floor = true }, { type = "StatThreshold", stat = "ManaCostPayablePool", thresholdStat = "ManaCost" }, { type = "SkillName", skillNameList = { "Forbidden Rite", "Dark Bargain" }, includeTransfigured = true }),
 	} end,
 	["skills gain added chaos damage equal to (%d+)%% of mana cost, if mana cost is not higher than the maximum you could spend"] = function(num) return {
-		mod("ChaosMin", "BASE", 1, { type = "PercentStat", stat = "ManaCost", percent = num }),
-		mod("ChaosMax", "BASE", 1, { type = "PercentStat", stat = "ManaCost", percent = num }),
+		mod("ChaosMin", "BASE", 1, { type = "PercentStat", stat = "ManaCost", percent = num, floor = true }, { type = "StatThreshold", stat = "ManaCostPayablePool", thresholdStat = "ManaCost" }),
+		mod("ChaosMax", "BASE", 1, { type = "PercentStat", stat = "ManaCost", percent = num, floor = true }, { type = "StatThreshold", stat = "ManaCostPayablePool", thresholdStat = "ManaCost" }),
 	} end,
 	["herald of thunder's storms hit enemies with (%d+)%% increased frequency"] = function(num) return { mod("HeraldStormFrequency", "INC", num), } end,
 	["storms hit enemies with (%d+)%% increased frequency"] = function(num) return { mod("HeraldStormFrequency", "INC", num), } end,
@@ -5605,6 +5685,7 @@ local specialModList = {
 	["gain elusive on critical strike"] = {	flag("Condition:CanBeElusive") },
 	["gain a random shrine buff every (%d+) seconds"] = { flag("Condition:CanHaveRegularShrines") },
 	["gain a random shrine buff for (%d+) seconds when you kill a rare or unique enemy"] = { flag("Condition:CanHaveRegularShrines") },
+	["gain a random blood shrine buff every (%d+) seconds"] = { flag("Condition:CanHaveBloodShrines") },
 	["(%d+)%% chance to gain elusive when you block while dual wielding"] = { flag("Condition:CanBeElusive", { type = "Condition", var = "DualWielding" }) },
 	["elusive on you reduces in effect (%d+)%% slower"] = function(num) return { mod("ElusiveEffectLossSlower", "INC", num) } end,
 	["elusive's effect on you is increased instead for the first (%d+) seconds"] = function(num) return { mod("ElusiveEffectIncreaseDuration", "BASE", num) } end,
@@ -5874,6 +5955,14 @@ local specialModList = {
 	["%d+%% [ir][ne][cd][ru][ec][ae][sd]e?d? ?[%a%s]* modifier magnitudes"] = {},
 	["%d+%% [ir][ne][cd][ru][ec][ae][sd]e?d? effect of [sp][ur][fe]fixes"] = {},
 	["[%a%s]* modifier magnitudes are doubled"] = {},
+	-- handled in items tab corrupt menu
+	-- currently this is not correct, but the
+	-- vestigial implicits in-game only contain this line. it is probably safe
+	-- to assume that GGG will add a line to the vestigial mod which will
+	-- instead say how many implicits the item can have. in that case, the two
+	-- below modifiers should be swapped.
+	["can be modified while corrupted"] = { mod("CorruptImplicitCount", "BASE", 5) },
+	["can have up to 5 implicit modifiers while item has this modifier"] = {},
 }
 for _, name in ipairs(data.keystones) do
 	specialModList[name:lower()] = { mod("Keystone", "LIST", name), flag("Condition:Have"..firstToUpper(name):gsub(" %l", string.upper):gsub(" ", "")) }
@@ -5931,13 +6020,6 @@ local suffixTypes = {
 	["is leeched as mana"] = "ManaLeech",
 	["leeched as energy shield"] = "EnergyShieldLeech",
 	["is leeched as energy shield"] = "EnergyShieldLeech",
-}
-local dmgTypes = {
-	["physical"] = "Physical",
-	["lightning"] = "Lightning",
-	["cold"] = "Cold",
-	["fire"] = "Fire",
-	["chaos"] = "Chaos",
 }
 local penTypes = {
 	["lightning resistance"] = "LightningPenetration",
@@ -6362,7 +6444,7 @@ local jewelSelfUnallocFuncs = {
 	["Grants all bonuses of Unallocated Small Passive Skills in Radius"] = function(node, out, data)
 		if node then
 			if node.type == "Normal" then
-				data.modList = data.modList or new("ModList")
+				data.modList = data.modList or new("ModList"):ModList()
 
 				-- Filter out "Condition:ConnectedTo" mods as these nodes are not technically allocated by this jewel func
 				for _, mod in ipairs(out) do
@@ -6378,7 +6460,7 @@ local jewelSelfUnallocFuncs = {
 	["Grants all bonuses of Unallocated Notable Passive Skills in Radius"] = function(node, out, data)
 		if node then
 			if node.type == "Notable" then
-				data.modList = data.modList or new("ModList")
+				data.modList = data.modList or new("ModList"):ModList()
 
 				-- Filter out "Condition:ConnectedTo" mods as these nodes are not technically allocated by this jewel func
 				for _, mod in ipairs(out) do
@@ -6550,6 +6632,11 @@ end
 
 -- Scan a line for the earliest and longest match from the pattern list
 -- If a match is found, returns the corresponding value from the pattern list, plus the remainder of the line and a table of captures
+---@generic T
+---@param line string
+---@param patternList table<string, T>
+---@param plain? boolean
+---@return T?, string, string[]?
 local function scan(line, patternList, plain)
 	local bestIndex, bestEndIndex
 	local bestPattern = ""
@@ -6693,6 +6780,7 @@ local function parseMod(line, order)
 	modFlag, line = scan(line, modFlagList, true)
 
 	-- Find modifier value and type according to form
+	---@type string|number|table
 	local modValue = tonumber(formCap[1]) or formCap[1]
 	local modType = "BASE"
 	local modSuffix
@@ -6927,28 +7015,58 @@ local function parseMod(line, order)
 	return modList, line:match("%S") and line
 end
 
+local function parseModOrdered(line)
+	local modList, extra = parseMod(line, 1)
+	if modList and extra then
+		modList, extra = parseMod(line, 2)
+	end
+	return modList, extra
+end
+
+local nearbyRewrites = {
+	{ "^enemy monsters within [%d%.]+ metres? have ", "nearby enemy monsters' " },
+	{ "while at least (%d+) enemies within [%d%.]+ metres?", "while at least %1 enemies are nearby" },
+	{ "while you have an ally within [%d%.]+ metres?", "while you have at least 1 nearby ally" },
+	{ "when you or allies within [%d%.]+ metres?", "when you or a nearby ally" },
+	-- spell-checker: disable
+	{ "(rare or unique enem%a+) within [%d%.]+ metres?", "%1 nearby" },
+	-- spell-checker: enable
+	{ "(applies .- to enemies) within [%d%.]+ metres?", "%1 near it" },
+	{ "(%a+) within [%d%.]+ metres?", "nearby %1" },
+}
 local cache = { }
 local unsupported = { }
 local count = 0
 --local foo = io.open("../unsupported.txt", "w")
 --foo:close()
-return function(line, isComb)
-	if not cache[line] then
-		local modList, extra = parseMod(line, 1)
-		if modList and extra then
-			modList, extra = parseMod(line, 2)
-		end
-		cache[line] = { modList, extra }
-		if foo and not isComb and not cache[line][1] then
-			local form = line:gsub("[%+%-]?%d+%.?%d*","{num}")
-			if not unsupported[form] then
-				unsupported[form] = true
-				count = count + 1
-				foo = io.open("../unsupported.txt", "a+")
-				foo:write(count, ': ', form, (cache[line][2] and #cache[line][2] < #line and ('    {' .. cache[line][2]).. '}') or "", '\n')
-				foo:close()
+return {
+	parseMod = function(line, isComb)
+		if not cache[line] then
+			local modList, extra = parseModOrdered(line)
+			local nearbyLine = (not modList or extra) and line:lower()
+			-- 3.30 replaced "nearby" with explicit distances. Lines that don't parse are retried with the old wording
+			if nearbyLine and nearbyLine:find("within [%d%.]+ metre") then
+				for _, rewrite in ipairs(nearbyRewrites) do
+					nearbyLine = nearbyLine:gsub(rewrite[1], rewrite[2])
+				end
+				local nearbyModList, nearbyExtra = parseModOrdered(nearbyLine)
+				if nearbyModList and not nearbyExtra then
+					modList, extra = nearbyModList, nil
+				end
+			end
+			cache[line] = { modList, extra }
+			if foo and not isComb and not cache[line][1] then
+				local form = line:gsub("[%+%-]?%d+%.?%d*", "{num}")
+				if not unsupported[form] then
+					unsupported[form] = true
+					count = count + 1
+					foo = io.open("../unsupported.txt", "a+")
+					foo:write(count, ': ', form, (cache[line][2] and #cache[line][2] < #line and ('    {' .. cache[line][2]) .. '}') or "", '\n')
+					foo:close()
+				end
 			end
 		end
-	end
-	return unpack(copyTable(cache[line]))
-end, cache
+		return unpack(copyTable(cache[line]))
+	end,
+	parseModCache = cache
+}

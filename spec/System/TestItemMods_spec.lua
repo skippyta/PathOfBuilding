@@ -7,6 +7,166 @@ describe("TetsItemMods", function()
 		-- newBuild() takes care of resetting everything in setup()
 	end)
 
+	local function createCraftedRing()
+		build.itemsTab:CreateDisplayItemFromRaw([[Rarity: Rare
+			Test Ring
+			Amethyst Ring
+			Crafted: true
+			Prefix: None
+			Prefix: None
+			Prefix: None
+			Suffix: None
+			Suffix: None
+			Suffix: None
+			Quality: 12
+			Implicits: 0]])
+		return build.itemsTab.displayItem
+	end
+
+	it("clears catalyst quality when no catalyst is selected", function()
+		local item = createCraftedRing()
+		local controls = build.itemsTab.controls
+		local catalyst = controls.displayItemCatalyst
+		local catalystQuality = controls.displayItemCatalystQualityEdit
+
+		catalyst:SetSel(2)
+		assert.are.equals(1, item.catalyst)
+		assert.are.equals(20, item.catalystQuality)
+		catalystQuality:SetText("17", true)
+		assert.are.equals(17, item.catalystQuality)
+		assert.is_truthy(item:BuildRaw():match("Catalyst: Abrasive"))
+		assert.is_truthy(item:BuildRaw():match("CatalystQuality: 17"))
+
+		catalyst:SetSel(1)
+		assert.are.equals(0, item.catalyst)
+		assert.is_nil(item.catalystQuality)
+		assert.are.equals("0", catalystQuality.buf)
+		assert.is_nil(item:BuildRaw():match("Catalyst:"))
+		assert.is_nil(item:BuildRaw():match("CatalystQuality:"))
+
+		item.catalystQuality = 20
+		build.itemsTab:SetDisplayItem(item)
+		assert.is_nil(item.catalystQuality)
+		assert.are.equals("0", catalystQuality.buf)
+		assert.is_nil(item:BuildRaw():match("CatalystQuality:"))
+	end)
+
+	for _, wording in ipairs({ "Increases", "Increase" }) do
+		it("Scornflux applies Arcane Surge cast speed to movement speed with '" .. wording .. "' wording", function()
+			build.itemsTab:CreateDisplayItemFromRaw("Scornflux\nSatin Slippers\n" .. wording .. " to Cast Speed from Arcane Surge also applies to Movement Speed")
+			build.itemsTab:AddDisplayItem()
+			runCallback("OnFrame")
+			local withoutArcaneSurge = build.calcsTab.mainOutput.MovementSpeedMod
+
+			build.configTab.input.buffArcaneSurge = true
+			build.configTab:BuildModList()
+			runCallback("OnFrame")
+			assert.are.near(withoutArcaneSurge + 0.2, build.calcsTab.mainOutput.MovementSpeedMod, 10 ^ -9)
+		end)
+	end
+
+	for _, punctuation in ipairs({ ",", "" }) do
+		it("Gamblesprint applies configured movement speed with '" .. punctuation .. "' punctuation", function()
+			build.itemsTab:CreateDisplayItemFromRaw("Gamblesprint\nHydrascale Boots\nWhen Hit, gain a random Movement Speed modifier from 40% reduced to 100% increased" .. punctuation .. " until Hit again")
+			build.itemsTab:AddDisplayItem()
+			for _, movementSpeed in ipairs({ 100, -40 }) do
+				build.configTab.input.GamblesprintMovementSpeed = movementSpeed
+				build.configTab:BuildModList()
+				runCallback("OnFrame")
+				assert.are.near(1 + movementSpeed / 100, build.calcsTab.mainOutput.MovementSpeedMod, 10 ^ -9)
+			end
+		end)
+	end
+
+	for _, wording in ipairs({ "Item Rarity", "Rarity of Items found" }) do
+		it("The Pariah grants rarity only for white sockets with '" .. wording .. "' wording", function()
+			for _, colour in ipairs({ "W", "R" }) do
+				local item = new("Item"):Item("Rarity: UNIQUE\nThe Pariah\nUnset Ring\nSockets: " .. colour .. "\nImplicits: 0\n60% increased " .. wording .. " per White Socket")
+				build.itemsTab:AddItem(item, true)
+				build.itemsTab.slots["Ring 1"]:SetSelItemId(item.id)
+				build.buildFlag = true
+				runCallback("OnFrame")
+				assert.are.equals(colour == "W" and 60 or 0, build.calcsTab.mainEnv.player.modDB:Sum("INC", nil, "LootRarity"))
+			end
+		end)
+	end
+
+	for _, wording in ipairs({ "Enemy", "Enemy Monster" }) do
+		it("Triumvirate Authority ignores physical reduction only for socketed Vaal skills with '" .. wording .. "' wording", function()
+			build.itemsTab:CreateDisplayItemFromRaw("Triumvirate Authority\nUnset Ring\nSockets: G\nHits from Socketed Vaal Skills ignore " .. wording .. " Physical Damage Reduction")
+			build.itemsTab:AddDisplayItem()
+			build.skillsTab:PasteSocketGroup("Slot: Ring 1\nVaal Blade Vortex 20/0  1\n")
+			build.skillsTab:PasteSocketGroup("Slot: Ring 1\nFireball 20/0  1\n")
+			build.skillsTab:PasteSocketGroup("Slot: Helmet\nVaal Blade Vortex 20/0  1\n")
+			runCallback("OnFrame")
+
+			local affected, unaffected = 0, 0
+			for _, skill in ipairs(build.calcsTab.mainEnv.player.activeSkillList) do
+				local expected = skill.socketGroup.slot == "Ring 1" and skill.skillTypes[SkillType.Vaal] or false
+				assert.are.equals(expected, skill.skillModList:Flag(skill.skillCfg, "IgnoreEnemyPhysicalDamageReduction") or false)
+				if expected then
+					affected = affected + 1
+				else
+					unaffected = unaffected + 1
+				end
+			end
+			assert.are.equals(1, affected)
+			assert.is_true(unaffected >= 2)
+		end)
+	end
+
+	for _, case in ipairs({
+		{ name = "current", line = "100% chance to Avoid being Chilled or Frozen if you have used a Fire Skill Recently" },
+		{ name = "legacy", line = "Cannot be Frozen or Chilled if you've used a Fire Skill Recently" },
+	}) do
+		it("Hrimnor's Resolve grants conditional chill and freeze protection with " .. case.name .. " wording", function()
+			build.itemsTab:CreateDisplayItemFromRaw("Hrimnor's Resolve\nSamnite Helmet\n" .. case.line)
+			build.itemsTab:AddDisplayItem()
+			for _, recently in ipairs({ false, true, false }) do
+				build.configTab.input.conditionUsedFireSkillRecently = recently
+				build.configTab:BuildModList()
+				runCallback("OnFrame")
+				assert.are.equals(recently and 100 or 0, build.calcsTab.mainOutput.ChillAvoidChance)
+				assert.are.equals(recently and 100 or 0, build.calcsTab.mainOutput.FreezeAvoidChance)
+			end
+		end)
+	end
+
+	it("applies the Steelworm projectile bonus for each historical shard threshold", function()
+		local raw
+		for _, entry in ipairs(data.uniques.quiver) do
+			if entry:match("^Steelworm\n") then
+				raw = entry
+				break
+			end
+		end
+		assert.is_not_nil(raw)
+
+		for variant, threshold in ipairs({ 12, 12, 8, 8 }) do
+			newBuild()
+			build.itemsTab:CreateDisplayItemFromRaw("Test Bow\nCrude Bow\nImplicits: 0")
+			build.itemsTab:AddDisplayItem()
+			local item = new("Item"):Item(raw)
+			item.variant = variant
+			item:BuildAndParseRaw()
+			build.itemsTab:AddItem(item, true)
+			build.itemsTab.slots["Weapon 2"]:SetSelItemId(item.id)
+			build.skillsTab:PasteSocketGroup("Fireball 20/0  1")
+			build.buildFlag = true
+			runCallback("OnFrame")
+			local base = build.calcsTab.mainOutput.ProjectileCount
+			local other = threshold == 8 and 12 or 8
+			build.configTab.input["conditionConsumed" .. other .. "SteelShardsRecently"] = true
+			build.configTab:BuildModList()
+			runCallback("OnFrame")
+			assert.are.equals(base, build.calcsTab.mainOutput.ProjectileCount)
+			build.configTab.input["conditionConsumed" .. threshold .. "SteelShardsRecently"] = true
+			build.configTab:BuildModList()
+			runCallback("OnFrame")
+			assert.are.equals(base + 3, build.calcsTab.mainOutput.ProjectileCount)
+		end
+	end)
+
 	it("shows versioned reusable variant groups", function()
 		build.itemsTab:CreateDisplayItemFromRaw([[
 			Rarity: Unique
@@ -718,8 +878,28 @@ describe("TetsItemMods", function()
 		assert.are.equals(10, build.calcsTab.calcsOutput.PhysicalEnergyShieldRecoup)
 	end)
 
+	it("supports Baleful Dominion recoup modifiers", function()
+		build.configTab.input.customMods = [[
+			15% of Damage taken Recouped as Life
+			10% of Physical Damage taken Recouped as Life
+			Life Recoup also recovers Mana
+			50% less recovery from Recoup
+		]]
+		build.configTab:BuildModList()
+		runCallback("OnFrame")
+
+		assert.are.equals(7.5, build.calcsTab.calcsOutput.LifeRecoup)
+		assert.are.equals(7.5, build.calcsTab.calcsOutput.ManaRecoup)
+		assert.are.equals(5, build.calcsTab.calcsOutput.PhysicalLifeRecoup)
+		assert.are.equals(5, build.calcsTab.calcsOutput.PhysicalManaRecoup)
+		local lifeRecoupBreakdown = build.calcsTab.calcsEnv.player.breakdown.LifeRecoup
+		assert.are.equals("7.5% over 4 seconds", lifeRecoupBreakdown[#lifeRecoupBreakdown])
+		local physicalLifeRecoupBreakdown = build.calcsTab.calcsEnv.player.breakdown.PhysicalLifeRecoup
+		assert.are.equals("= 5.0% over 4 seconds", physicalLifeRecoupBreakdown[#physicalLifeRecoupBreakdown])
+	end)
+
 	it("crafts modifiers from supported bases on rare-like uniques", function()
-		local item = new("Item", [[
+		local item = new("Item"):Item([[
 			Item Class: Helmets
 			Rarity: Unique
 			Subsume the Source
@@ -759,7 +939,7 @@ describe("TetsItemMods", function()
 	end)
 
 	it("uses the item base for rare-like modifier eligibility by default", function()
-		local item = new("Item", [[
+		local item = new("Item"):Item([[
 			Item Class: Bows
 			Rarity: Unique
 			The Crimson Storm
@@ -778,7 +958,7 @@ describe("TetsItemMods", function()
 	end)
 
 	it("keeps modifier metadata on duplicate variant tooltip lines", function()
-		local item = new("Item", [[
+		local item = new("Item"):Item([[
 			Rarity: Unique
 			Duplicate Variant Test
 			Plate Vest
@@ -791,7 +971,7 @@ describe("TetsItemMods", function()
 			Implicits: 0
 			{variant:1}+10 to maximum Life
 		]])
-		local tooltip = new("Tooltip")
+		local tooltip = new("Tooltip"):Tooltip()
 		build.itemsTab:AddItemTooltip(tooltip, item)
 
 		local count = 0
@@ -805,7 +985,7 @@ describe("TetsItemMods", function()
 	end)
 
 	it("does not sort cluster jewel modifiers when the sorting control is hidden", function()
-		local item = new("Item", [[
+		local item = new("Item"):Item([[
 			Rarity: RARE
 			New Item
 			Large Cluster Jewel
@@ -859,6 +1039,29 @@ describe("TetsItemMods", function()
 		assert.is_true(controls.displayItemCustomModifierRemove1:IsShown())
 	end)
 
+	it("hides custom modifier controls after saving the display item", function()
+		build.itemsTab:CreateDisplayItemFromRaw([[
+			Rarity: RARE
+			Test Item
+			Iron Ring
+			Implicits: 1
+			Adds 1 to 4 Physical Damage to Attacks
+			{crafted}+8 to Strength
+		]])
+
+		local controls = build.itemsTab.controls
+		assert.is_true(controls.displayItemCustomModifierRemove1:IsShown())
+		assert.is_true(controls.displayItemCustomModifier1:IsShown())
+
+		build.itemsTab:AddDisplayItem()
+
+		assert.is_nil(build.itemsTab.displayItem)
+		assert.is_falsy(controls.displayItemSectionCustom:IsShown())
+		assert.is_falsy(controls.displayItemCustomModifierRemove1:IsShown())
+		assert.is_falsy(controls.displayItemCustomModifier1:IsShown())
+		assert.is_falsy(controls.displayItemCustomModifierLabel1:IsShown())
+	end)
+
 	it("shows affix controls for items crafted in Path of Building", function()
 		build.itemsTab:CreateDisplayItemFromRaw([[
 			Rarity: RARE
@@ -880,7 +1083,7 @@ describe("TetsItemMods", function()
 	end)
 
 	it("sorts crafted modifier replacements without retaining the selected modifier", function()
-		local item = new("Item", [[
+		local item = new("Item"):Item([[
 			Rarity: RARE
 			New Item
 			Cobalt Jewel
@@ -917,12 +1120,12 @@ describe("TetsItemMods", function()
 	end)
 	
 	it("shows a fallback tooltip when an item's base is no longer supported", function()
-		local item = new("Item", [[
+		local item = new("Item"):Item([[
 			Rarity: Unique
 			Legacy Item
 			Removed Base
 		]])
-		local tooltip = new("Tooltip")
+		local tooltip = new("Tooltip"):Tooltip()
 
 		assert.has_no.errors(function()
 			build.itemsTab:AddItemTooltip(tooltip, item)
@@ -930,4 +1133,134 @@ describe("TetsItemMods", function()
 		assert.is_truthy(tooltip.lines[#tooltip.lines].text:find("Item base is not supported", 1, true))
 	end)
 
+	local function findActiveSkill(name)
+		for _, activeSkill in ipairs(build.calcsTab.mainEnv.player.activeSkillList) do
+			if activeSkill.activeEffect.grantedEffect.name == name then
+				return activeSkill
+			end
+		end
+	end
+
+	local function countSupport(activeSkill, supportId)
+		local count = 0
+		for _, effect in ipairs(activeSkill.effectList) do
+			if effect.grantedEffect.id == supportId then
+				count = count + 1
+			end
+		end
+		return count
+	end
+
+	local function hasSupport(activeSkill, supportId)
+		return countSupport(activeSkill, supportId) > 0
+	end
+
+	local function addItem(raw)
+		build.itemsTab:CreateDisplayItemFromRaw(raw)
+		build.itemsTab:AddDisplayItem()
+	end
+
+	-- Pearl of Tsoatha: despite the "Socketed in" wording these support skills granted
+	-- by the item in that slot as well, which ExtraSupport normally excludes
+	it("ExtraSupport marked appliesToGrantedSkills supports an item granted skill", function()
+		addItem("Granting Helmet\nEzomyte Burgonet\nGrants Level 20 Fireball")
+		addItem("Supporting Ring\nPrismatic Ring\nSkills Socketed in your Helmet are Supported by level 20 Added Lightning Damage")
+		runCallback("OnFrame")
+
+		local fireball = findActiveSkill("Fireball")
+		assert.is_not_nil(fireball)
+		assert.is_true(hasSupport(fireball, "SupportAddedLightningDamage"))
+		assert.is_true(fireball.skillModList:Sum("BASE", fireball.skillCfg, "LightningMin") > 0)
+	end)
+
+	it("ExtraSupport marked appliesToGrantedSkills still supports a socketed gem", function()
+		addItem("Socketed Helmet\nEzomyte Burgonet\nSockets: B")
+		addItem("Supporting Ring\nPrismatic Ring\nSkills Socketed in your Helmet are Supported by level 20 Added Lightning Damage")
+		build.skillsTab:PasteSocketGroup("Slot: Helmet\nFireball 20/0  1\n")
+		runCallback("OnFrame")
+
+		local fireball = findActiveSkill("Fireball")
+		assert.is_not_nil(fireball)
+		assert.is_true(hasSupport(fireball, "SupportAddedLightningDamage"))
+	end)
+
+	it("ExtraSupport marked appliesToGrantedSkills does not cross slots", function()
+		addItem("Granting Gloves\nSpiked Gloves\nGrants Level 20 Fireball")
+		addItem("Supporting Ring\nPrismatic Ring\nSkills Socketed in your Helmet are Supported by level 20 Added Lightning Damage")
+		runCallback("OnFrame")
+
+		local fireball = findActiveSkill("Fireball")
+		assert.is_not_nil(fireball)
+		assert.is_false(hasSupport(fireball, "SupportAddedLightningDamage"))
+	end)
+
+	-- The relaxation is opt-in, so a Forbidden Shako style mod must keep the old behaviour
+	it("plain ExtraSupport does not support an item granted skill", function()
+		addItem("Shako Like Helmet\nEzomyte Burgonet\nGrants Level 20 Fireball\nSocketed Gems are Supported by Level 20 Added Cold Damage")
+		runCallback("OnFrame")
+
+		local fireball = findActiveSkill("Fireball")
+		assert.is_not_nil(fireball)
+		assert.is_false(hasSupport(fireball, "SupportAddedColdDamage"))
+	end)
+
+	local anointedTreeSkill = "Anointed Amulet\nAmber Amulet\nAllocates Radiant Crusade"
+	local treePearl = "Tree Pearl\nPrismatic Ring\nSkills granted by your Passive Tree are Supported by level 20 Minion Damage"
+
+	it("ExtraSupport marked appliesToGrantedSkills supports a tree granted skill", function()
+		addItem(anointedTreeSkill)
+		addItem(treePearl)
+		runCallback("OnFrame")
+
+		local sentinel = findActiveSkill("Summon Sentinel of Radiance")
+		assert.is_not_nil(sentinel)
+		assert.is_true(hasSupport(sentinel, "SupportMinionDamage"))
+	end)
+
+	-- Regression guard for the duplicate application fix: addExtraSupports has to go
+	-- through addBestSupport, otherwise both rings insert their own copy of the support
+	it("applies a tree ExtraSupport once when two items grant it", function()
+		addItem(anointedTreeSkill)
+		addItem(treePearl)
+		addItem(treePearl)
+		runCallback("OnFrame")
+
+		local sentinel = findActiveSkill("Summon Sentinel of Radiance")
+		assert.is_not_nil(sentinel)
+		assert.are.equals(1, countSupport(sentinel, "SupportMinionDamage"))
+	end)
+
+	it("tree ExtraSupport does not support an item granted skill", function()
+		addItem("Granting Helmet\nEzomyte Burgonet\nGrants Level 20 Fireball")
+		addItem("Tree Pearl\nPrismatic Ring\nSkills granted by your Passive Tree are Supported by level 20 Added Lightning Damage")
+		runCallback("OnFrame")
+
+		local fireball = findActiveSkill("Fireball")
+		assert.is_not_nil(fireball)
+		assert.is_false(hasSupport(fireball, "SupportAddedLightningDamage"))
+	end)
+
+	it("tree ExtraSupport does not support a socketed gem", function()
+		addItem("Socketed Helmet\nEzomyte Burgonet\nSockets: B")
+		addItem("Tree Pearl\nPrismatic Ring\nSkills granted by your Passive Tree are Supported by level 20 Added Lightning Damage")
+		build.skillsTab:PasteSocketGroup("Slot: Helmet\nFireball 20/0  1\n")
+		runCallback("OnFrame")
+
+		local fireball = findActiveSkill("Fireball")
+		assert.is_not_nil(fireball)
+		assert.is_false(hasSupport(fireball, "SupportAddedLightningDamage"))
+	end)
+
+	-- Every tree granted skill shares the synthetic "Passive Tree" slot, so each one pools
+	-- the support lists of all the others. A second tree skill must not inflate the count.
+	it("applies a tree ExtraSupport once when another tree skill shares the slot", function()
+		addItem("Anointed Amulet\nAmber Amulet\nAllocates Radiant Crusade\nAllocates Avatar of the Wilds")
+		addItem(treePearl)
+		runCallback("OnFrame")
+
+		assert.is_not_nil(findActiveSkill("Unbound Avatar"))
+		local sentinel = findActiveSkill("Summon Sentinel of Radiance")
+		assert.is_not_nil(sentinel)
+		assert.are.equals(1, countSupport(sentinel, "SupportMinionDamage"))
+	end)
 end)
